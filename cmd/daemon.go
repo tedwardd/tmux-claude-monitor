@@ -34,6 +34,7 @@ func runDaemon() {
 	if err != nil {
 		writeErrorCache(cfg, fmt.Sprintf("read credentials: %v", err))
 		fmt.Fprintf(os.Stderr, "daemon: %v\n", err)
+		os.Remove(pidPath)
 		os.Exit(1)
 	}
 
@@ -42,6 +43,7 @@ func runDaemon() {
 		if err != nil {
 			writeErrorCache(cfg, fmt.Sprintf("bootstrap: %v", err))
 			fmt.Fprintf(os.Stderr, "daemon: bootstrap: %v\n", err)
+			os.Remove(pidPath)
 			os.Exit(1)
 		}
 		cfg.OrgUUID = uuid
@@ -60,7 +62,6 @@ func runDaemon() {
 		usage, err := api.FetchUsage(creds.AccessToken, cfg.OrgUUID)
 		p := cache.Path(cfg.CachePath)
 		if err != nil {
-			consecutiveFails++
 			cache.WriteToPath(p, cache.Entry{FetchedAt: time.Now().UTC(), Error: err.Error()})
 			if ticker != nil {
 				backoff := time.Duration(30*(1<<consecutiveFails)) * time.Second
@@ -69,6 +70,7 @@ func runDaemon() {
 				}
 				ticker.Reset(backoff)
 			}
+			consecutiveFails++
 			return
 		}
 		consecutiveFails = 0
