@@ -72,6 +72,10 @@ func TestFetchBootstrap(t *testing.T) {
 func TestFetchUsage(t *testing.T) {
 	resetTime := time.Now().Add(2 * time.Hour).UTC().Truncate(time.Second)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer test-token" {
+			http.Error(w, "unauthorized", 401)
+			return
+		}
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"raw_limits": map[string]interface{}{
 				"message_limit":      50,
@@ -91,5 +95,8 @@ func TestFetchUsage(t *testing.T) {
 	}
 	if usage.MessagesUsed != 30 { // limit - remaining = 50 - 20
 		t.Errorf("MessagesUsed: got %d", usage.MessagesUsed)
+	}
+	if !usage.ResetAt.Equal(resetTime) {
+		t.Errorf("ResetAt: got %v, want %v", usage.ResetAt, resetTime)
 	}
 }

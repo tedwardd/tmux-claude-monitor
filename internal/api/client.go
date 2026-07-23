@@ -13,6 +13,8 @@ const (
 	usageDomain  = "https://claude.ai"
 )
 
+var httpClient = &http.Client{Timeout: 30 * time.Second}
+
 // Field path constants — documenting the discovered API response structure.
 // If the live API changes, run `init --discover` to inspect the raw response.
 const (
@@ -63,7 +65,7 @@ func FetchBootstrapFromURL(url, token string) (string, error) {
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("bootstrap request: %w", err)
 	}
@@ -105,7 +107,7 @@ func FetchUsageFromURL(baseURL, orgUUID, token string) (UsageData, error) {
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return UsageData{}, fmt.Errorf("usage request: %w", err)
 	}

@@ -47,7 +47,9 @@ func runDaemon() {
 			os.Exit(1)
 		}
 		cfg.OrgUUID = uuid
-		config.Save(cfg)
+		if err := config.Save(cfg); err != nil {
+			fmt.Fprintf(os.Stderr, "daemon: save config: %v\n", err)
+		}
 	}
 
 	usr1 := make(chan os.Signal, 1)
@@ -87,6 +89,9 @@ func runDaemon() {
 
 	fetch() // immediate fetch on start
 
+	if cfg.PollIntervalSeconds <= 0 {
+		cfg.PollIntervalSeconds = 300
+	}
 	ticker = time.NewTicker(time.Duration(cfg.PollIntervalSeconds) * time.Second)
 	defer ticker.Stop()
 
