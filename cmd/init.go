@@ -205,6 +205,9 @@ func runDiscover(token string) {
 	if orgUUID != "" {
 		fmt.Printf("\n[usage] GET https://claude.ai/api/organizations/%s/usage\n", orgUUID)
 		printRawResponse(fmt.Sprintf("https://claude.ai/api/organizations/%s/usage", orgUUID), token)
+	} else {
+		fmt.Println("  (could not extract orgUUID from bootstrap response; usage endpoint not fetched)")
+		fmt.Println("  Inspect the bootstrap JSON above and update FetchBootstrapFromURL in internal/api/client.go")
 	}
 
 	fmt.Println("\nUse the output above to identify correct field paths in internal/api/client.go")
