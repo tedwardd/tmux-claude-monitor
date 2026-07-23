@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"regexp"
 	"strings"
+	"syscall"
 	"time"
 
 	"claude-monitor/internal/api"
@@ -98,6 +99,9 @@ func runInit() {
 
 	// Print zshrc snippet
 	exe, _ := os.Executable()
+	if exe == "" {
+		exe = "claude-monitor"
+	}
 	fmt.Printf(`
 === Setup complete! ===
 
@@ -135,6 +139,9 @@ func patchTmuxConfig(path string) error {
 	}
 
 	exe, _ := os.Executable()
+	if exe == "" {
+		exe = "claude-monitor"
+	}
 	block := fmt.Sprintf(`
 
 %s
@@ -169,6 +176,7 @@ func startDaemon() error {
 	cmd := exec.Command(exe, "daemon")
 	cmd.Stdout = nil
 	cmd.Stderr = nil
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	return cmd.Start()
 }
 
@@ -176,32 +184,54 @@ func runDiscover(token string) {
 	fmt.Println("\n--- DISCOVER MODE: printing raw API responses ---")
 
 	fmt.Println("\n[bootstrap] GET https://claude.ai/api/bootstrap")
-	printRawResponse("https://claude.ai/api/bootstrap", token)
+	bootstrapBody := printRawResponse("https://claude.ai/api/bootstrap", token)
+
+	// Parse orgUUID from bootstrap response
+	orgUUID := ""
+	if bootstrapBody != nil {
+		if account, ok := bootstrapBody.(map[string]interface{})["account"].(map[string]interface{}); ok {
+			if memberships, ok := account["organizationMemberships"].([]interface{}); ok && len(memberships) > 0 {
+				if membership, ok := memberships[0].(map[string]interface{}); ok {
+					if org, ok := membership["organization"].(map[string]interface{}); ok {
+						if uuid, ok := org["uuid"].(string); ok {
+							orgUUID = uuid
+						}
+					}
+				}
+			}
+		}
+	}
+
+	if orgUUID != "" {
+		fmt.Printf("\n[usage] GET https://claude.ai/api/organizations/%s/usage\n", orgUUID)
+		printRawResponse(fmt.Sprintf("https://claude.ai/api/organizations/%s/usage", orgUUID), token)
+	}
 
 	fmt.Println("\nUse the output above to identify correct field paths in internal/api/client.go")
 }
 
-func printRawResponse(url, token string) {
+func printRawResponse(url, token string) interface{} {
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "  build request: %v\n", err)
-		return
+		return nil
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "  request failed: %v\n", err)
-		return
+		return nil
 	}
 	defer resp.Body.Close()
 
 	var pretty interface{}
 	if err := json.NewDecoder(resp.Body).Decode(&pretty); err != nil {
 		fmt.Fprintf(os.Stderr, "  decode failed: %v\n", err)
-		return
+		return nil
 	}
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
 	enc.Encode(pretty)
+	return pretty
 }
