@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 )
 
 func Execute() {
@@ -27,6 +28,12 @@ func Execute() {
 		printUsage()
 		os.Exit(1)
 	}
+}
+
+// sharedPIDPath returns the canonical PID file path used by both daemon and refresh.
+func sharedPIDPath() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".cache", "claude-monitor", "daemon.pid")
 }
 
 func printUsage() {
