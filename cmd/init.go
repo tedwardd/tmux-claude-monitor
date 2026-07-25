@@ -194,11 +194,6 @@ func patchTmuxConfig(path string) error {
 	}
 	content := string(data)
 
-	if strings.Contains(content, markerBegin) {
-		fmt.Println("  tmux config already patched, skipping.")
-		return nil
-	}
-
 	// Extract current status-right value
 	re := regexp.MustCompile(`(?m)^set\s+-g\s+status-right\s+'([^']*)'`)
 	match := re.FindStringSubmatch(content)
