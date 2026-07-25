@@ -40,7 +40,7 @@ pkg:
 	@echo "Package ready: $(PKG)"
 
 # Install the locally built package and run post-install setup
-pkg-install: pkg
+pkg-install:
 	sudo pacman -U --noconfirm $(PKG)
 	systemctl --user enable --now claude-monitor
 	claude-monitor init
