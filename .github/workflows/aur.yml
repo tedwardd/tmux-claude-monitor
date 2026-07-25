@@ -81,7 +81,7 @@ jobs:
           git add -A
           git diff --cached --quiet && exit 0
           git commit -m "chore: update to v${VERSION}"
-          git push
+          git push origin HEAD:master
 
   aur-bin:
     runs-on: ubuntu-latest
@@ -163,4 +163,4 @@ jobs:
           git add -A
           git diff --cached --quiet && exit 0
           git commit -m "chore: update to v${VERSION}"
-          git push
+          git push origin HEAD:master
