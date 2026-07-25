@@ -71,11 +71,7 @@ jobs:
           chmod 600 ~/.ssh/aur
           ssh-keyscan aur.archlinux.org >> ~/.ssh/known_hosts
 
-          cat >> ~/.ssh/config << 'SSHCONF'
-          Host aur.archlinux.org
-              User aur
-              IdentityFile ~/.ssh/aur
-          SSHCONF
+          printf 'Host aur.archlinux.org\n\tUser aur\n\tIdentityFile ~/.ssh/aur\n' >> ~/.ssh/config
 
           git clone ssh://aur@aur.archlinux.org/tmux-claude-monitor.git /tmp/aur-source
           cp packaging/aur/tmux-claude-monitor/PKGBUILD /tmp/aur-source/
@@ -157,11 +153,7 @@ jobs:
           chmod 600 ~/.ssh/aur
           ssh-keyscan aur.archlinux.org >> ~/.ssh/known_hosts
 
-          cat >> ~/.ssh/config << 'SSHCONF'
-          Host aur.archlinux.org
-              User aur
-              IdentityFile ~/.ssh/aur
-          SSHCONF
+          printf 'Host aur.archlinux.org\n\tUser aur\n\tIdentityFile ~/.ssh/aur\n' >> ~/.ssh/config
 
           git clone ssh://aur@aur.archlinux.org/tmux-claude-monitor-bin.git /tmp/aur-bin
           cp packaging/aur/tmux-claude-monitor-bin/PKGBUILD /tmp/aur-bin/
