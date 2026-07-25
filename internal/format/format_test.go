@@ -75,6 +75,46 @@ func TestBlockBar6Wide(t *testing.T) {
 	}
 }
 
+func TestDisplayOptionsHideBar(t *testing.T) {
+	e := makeEntry(50.0, time.Hour, "")
+	opts := format.DisplayOptions{Bar: false, Session: true, Reset: true, Extra: true}
+	out := format.StatusLineWithOptions(e, opts)
+	if strings.Contains(out, "█") || strings.Contains(out, "░") {
+		t.Errorf("bar should be hidden, got: %q", out)
+	}
+	if !strings.Contains(out, "50%") {
+		t.Errorf("session pct should be present, got: %q", out)
+	}
+}
+
+func TestDisplayOptionsHideSession(t *testing.T) {
+	e := makeEntry(50.0, time.Hour, "")
+	opts := format.DisplayOptions{Bar: true, Session: false, Reset: false, Extra: false}
+	out := format.StatusLineWithOptions(e, opts)
+	if strings.Contains(out, "50%") {
+		t.Errorf("session pct should be hidden, got: %q", out)
+	}
+}
+
+func TestDisplayOptionsHideExtra(t *testing.T) {
+	e := makeEntry(50.0, time.Hour, "")
+	e.ExtraUsageEnabled = true
+	e.ExtraUsedDollars = 5.0
+	e.ExtraLimitDollars = 50.0
+	opts := format.DisplayOptions{Bar: true, Session: true, Reset: true, Extra: false}
+	out := format.StatusLineWithOptions(e, opts)
+	if strings.Contains(out, "$") {
+		t.Errorf("extra should be hidden, got: %q", out)
+	}
+}
+
+func TestDisplayOptionsDefaultMatchesStatusLine(t *testing.T) {
+	e := makeEntry(60.0, 2*time.Hour, "")
+	if format.StatusLine(e) != format.StatusLineWithOptions(e, format.DefaultDisplayOptions()) {
+		t.Error("StatusLine and StatusLineWithOptions with defaults should produce identical output")
+	}
+}
+
 func TestResetTimeInOutput(t *testing.T) {
 	resetAt := time.Date(2026, 7, 23, 14, 30, 0, 0, time.Local)
 	e := cache.Entry{

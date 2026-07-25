@@ -23,5 +23,11 @@ func runStatus() {
 		return
 	}
 
-	fmt.Print(format.StatusLine(entry))
+	opts := format.DisplayOptions{
+		Bar:     cfg.Shows("bar"),
+		Session: cfg.Shows("session"),
+		Reset:   cfg.Shows("reset"),
+		Extra:   cfg.Shows("extra"),
+	}
+	fmt.Print(format.StatusLineWithOptions(entry, opts))
 }

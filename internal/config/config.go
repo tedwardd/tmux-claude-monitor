@@ -8,9 +8,25 @@ import (
 )
 
 type Config struct {
-	PollIntervalSeconds int    `json:"poll_interval_seconds"`
-	CachePath           string `json:"cache_path"`
-	CredentialsPath     string `json:"credentials_path"`
+	PollIntervalSeconds int      `json:"poll_interval_seconds"`
+	CachePath           string   `json:"cache_path"`
+	CredentialsPath     string   `json:"credentials_path"`
+	Display             []string `json:"display,omitempty"`
+}
+
+// Shows reports whether the named display component should be rendered.
+// Valid names: "bar", "session", "reset", "extra".
+// An empty or absent Display list means show everything.
+func (c Config) Shows(item string) bool {
+	if len(c.Display) == 0 {
+		return true
+	}
+	for _, d := range c.Display {
+		if d == item {
+			return true
+		}
+	}
+	return false
 }
 
 func DefaultConfig() Config {

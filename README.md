@@ -88,6 +88,23 @@ Config lives at `~/.config/claude-monitor/config.json` and is created by `init`:
 }
 ```
 
+### Display options
+
+Add a `display` array to control which components appear in the status bar. Omitting the key (or leaving it empty) shows everything.
+
+Valid values: `"bar"`, `"session"`, `"reset"`, `"extra"`
+
+```json
+{
+  "poll_interval_seconds": 300,
+  "cache_path": "~/.cache/claude-monitor/status.json",
+  "credentials_path": "~/.claude/.credentials.json",
+  "display": ["bar", "session"]
+}
+```
+
+The example above shows only the block bar and session percentage, hiding the reset time and extra usage.
+
 ## Viewing logs
 
 The daemon runs as a systemd user service. Logs are available via journald:

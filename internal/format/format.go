@@ -13,23 +13,51 @@ const (
 	fallbackNoCache = "#[fg=colour244]Claude: --#[default]"
 )
 
+// DisplayOptions controls which components appear in the status line.
+type DisplayOptions struct {
+	Bar     bool
+	Session bool
+	Reset   bool
+	Extra   bool
+}
+
+// DefaultDisplayOptions returns options that show all components.
+func DefaultDisplayOptions() DisplayOptions {
+	return DisplayOptions{Bar: true, Session: true, Reset: true, Extra: true}
+}
+
 func FallbackNoCache() string {
 	return fallbackNoCache
 }
 
+// StatusLine renders with all components shown.
 func StatusLine(e cache.Entry) string {
+	return StatusLineWithOptions(e, DefaultDisplayOptions())
+}
+
+// StatusLineWithOptions renders only the components enabled in opts.
+func StatusLineWithOptions(e cache.Entry, opts DisplayOptions) string {
 	if e.Error != "" || cache.IsStale(e) {
 		return fallback
 	}
 
 	pct := int(e.SessionUtilization)
 	color := colorCode(pct)
-	bar := blockBar(pct)
-	reset := e.SessionResetsAt.Local().Format("15:04")
 
-	s := fmt.Sprintf("%sClaude: %s %d%% ↺%s#[default]", color, bar, pct, reset)
+	var parts []string
+	if opts.Bar {
+		parts = append(parts, blockBar(pct))
+	}
+	if opts.Session {
+		parts = append(parts, fmt.Sprintf("%d%%", pct))
+	}
+	if opts.Reset {
+		parts = append(parts, "↺"+e.SessionResetsAt.Local().Format("15:04"))
+	}
 
-	if e.ExtraUsageEnabled {
+	s := color + "Claude: " + strings.Join(parts, " ") + "#[default]"
+
+	if opts.Extra && e.ExtraUsageEnabled {
 		extraColor := colorCode(int(e.ExtraUtilization))
 		s += fmt.Sprintf(" %s+$%.2f/$%.2f#[default]", extraColor, e.ExtraUsedDollars, e.ExtraLimitDollars)
 	}
