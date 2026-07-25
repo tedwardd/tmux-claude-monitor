@@ -18,7 +18,15 @@ import (
 )
 
 func runInit() {
-	discover := len(os.Args) > 2 && os.Args[2] == "--discover"
+	var force, discover bool
+	for _, arg := range os.Args[2:] {
+		switch arg {
+		case "--force":
+			force = true
+		case "--discover":
+			discover = true
+		}
+	}
 
 	fmt.Println("=== claude-monitor init ===")
 
@@ -62,30 +70,37 @@ func runInit() {
 
 	// Step 3: Write config
 	fmt.Println("\n[3/5] Writing config...")
-	if err := config.Save(cfg); err != nil {
-		fmt.Fprintf(os.Stderr, "ERROR: save config: %v\n", err)
-		os.Exit(1)
+	if !force && configExists() {
+		fmt.Printf("  Already exists at %s, skipping.\n", config.Path())
+	} else {
+		if err := config.Save(cfg); err != nil {
+			fmt.Fprintf(os.Stderr, "ERROR: save config: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("  Config written to: %s\n", config.Path())
 	}
-	fmt.Printf("  Config written to: %s\n", config.Path())
 
 	// Step 4: Patch tmux config
 	fmt.Println("\n[4/5] Patching tmux config...")
 	tmuxConf := expandHome("~/.config/tmux/tmux.conf")
-	if err := patchTmuxConfig(tmuxConf); err != nil {
-		fmt.Fprintf(os.Stderr, "ERROR: patch tmux: %v\n", err)
-		os.Exit(1)
+	if !force && tmuxAlreadyPatched(tmuxConf) {
+		fmt.Println("  tmux config already patched, skipping.")
+	} else {
+		if err := patchTmuxConfig(tmuxConf); err != nil {
+			fmt.Fprintf(os.Stderr, "ERROR: patch tmux: %v\n", err)
+			os.Exit(1)
+		}
 	}
 
 	// Step 5: Install and start systemd user service
 	fmt.Println("\n[5/5] Installing systemd user service...")
-	exe, err := os.Executable()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "ERROR: locate executable: %v\n", err)
-		os.Exit(1)
-	}
-	if err := installSystemdService(exe); err != nil {
-		fmt.Fprintf(os.Stderr, "ERROR: systemd setup: %v\n", err)
-		os.Exit(1)
+	if !force && serviceAlreadyInstalled() {
+		fmt.Println("  Service already installed, skipping.")
+	} else {
+		if err := installSystemdService(); err != nil {
+			fmt.Fprintf(os.Stderr, "ERROR: systemd setup: %v\n", err)
+			os.Exit(1)
+		}
 	}
 
 	// Reload tmux
@@ -106,6 +121,28 @@ Service auto-starts on login. To manage it:
 Keybinding: <prefix> F5  →  manual refresh`)
 }
 
+func configExists() bool {
+	_, err := os.Stat(config.Path())
+	return err == nil
+}
+
+func tmuxAlreadyPatched(path string) bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	return strings.Contains(string(data), "# claude-monitor begin")
+}
+
+func serviceAlreadyInstalled() bool {
+	home, _ := os.UserHomeDir()
+	userUnit := filepath.Join(home, ".config", "systemd", "user", "claude-monitor.service")
+	sysUnit := "/usr/lib/systemd/user/claude-monitor.service"
+	_, errUser := os.Stat(userUnit)
+	_, errSys := os.Stat(sysUnit)
+	return errUser == nil || errSys == nil
+}
+
 const unitTemplate = `[Unit]
 Description=Claude usage monitor
 After=network.target
@@ -113,7 +150,7 @@ StartLimitIntervalSec=300
 StartLimitBurst=5
 
 [Service]
-ExecStart=%s daemon
+ExecStart=claude-monitor daemon
 Restart=on-failure
 RestartSec=30
 
@@ -121,15 +158,14 @@ RestartSec=30
 WantedBy=default.target
 `
 
-func installSystemdService(exe string) error {
+func installSystemdService() error {
 	unitDir := expandHome("~/.config/systemd/user")
 	if err := os.MkdirAll(unitDir, 0755); err != nil {
 		return fmt.Errorf("create unit dir: %w", err)
 	}
 
 	unitPath := filepath.Join(unitDir, "claude-monitor.service")
-	unit := fmt.Sprintf(unitTemplate, exe)
-	if err := os.WriteFile(unitPath, []byte(unit), 0644); err != nil {
+	if err := os.WriteFile(unitPath, []byte(unitTemplate), 0644); err != nil {
 		return fmt.Errorf("write unit file: %w", err)
 	}
 	fmt.Printf("  Unit file: %s\n", unitPath)
@@ -172,10 +208,7 @@ func patchTmuxConfig(path string) error {
 		content = re.ReplaceAllString(content, "")
 	}
 
-	exe, _ := os.Executable()
-	if exe == "" {
-		exe = "claude-monitor"
-	}
+	exe := "claude-monitor"
 	block := fmt.Sprintf(`
 
 %s
