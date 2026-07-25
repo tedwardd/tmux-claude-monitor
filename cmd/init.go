@@ -140,6 +140,14 @@ func serviceAlreadyInstalled() bool {
 	sysUnit := "/usr/lib/systemd/user/claude-monitor.service"
 	_, errUser := os.Stat(userUnit)
 	_, errSys := os.Stat(sysUnit)
+	// If a package-installed system unit exists, remove any stale user-level unit
+	// that would shadow it (user units take precedence over system units).
+	if errSys == nil && errUser == nil {
+		if err := os.Remove(userUnit); err == nil {
+			fmt.Println("  Removed stale user unit shadowing package-installed service.")
+			exec.Command("systemctl", "--user", "daemon-reload").Run()
+		}
+	}
 	return errUser == nil || errSys == nil
 }
 

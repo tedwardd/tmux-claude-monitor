@@ -49,6 +49,8 @@ pkg-install:
 pkg-uninstall:
 	-systemctl --user stop claude-monitor
 	-systemctl --user disable claude-monitor
+	-rm -f $(HOME)/.config/systemd/user/claude-monitor.service
+	-systemctl --user daemon-reload
 	-sed -i '/# claude-monitor begin/,/# claude-monitor end/d' $(TMUX_CONF)
 	-tmux source $(TMUX_CONF) 2>/dev/null
 	-rm -rf $(HOME)/.config/claude-monitor
