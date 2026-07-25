@@ -5,6 +5,7 @@ VERSION    := test
 WORKDIR    := /tmp/aur-build
 ARCHIVE    := $(WORKDIR)/$(PKGNAME)-$(VERSION).tar.gz
 PKG        := $(WORKDIR)/$(PKGNAME)-$(VERSION)-1-x86_64.pkg.tar.zst
+TMUX_CONF  := $(HOME)/.config/tmux/tmux.conf
 
 .PHONY: build test install pkg pkg-install pkg-uninstall clean
 
@@ -37,14 +38,21 @@ pkg:
 	@cd $(WORKDIR) && makepkg --noconfirm
 	@echo ""
 	@echo "Package ready: $(PKG)"
-	@echo "Run 'make pkg-install' to install it"
 
-# Install the locally built package
-pkg-install: $(PKG)
+# Install the locally built package and run post-install setup
+pkg-install: pkg
 	sudo pacman -U --noconfirm $(PKG)
+	systemctl --user enable --now claude-monitor
+	claude-monitor init
 
-# Uninstall the test package
+# Reverse everything pkg-install did
 pkg-uninstall:
+	-systemctl --user stop claude-monitor
+	-systemctl --user disable claude-monitor
+	-sed -i '/# claude-monitor begin/,/# claude-monitor end/d' $(TMUX_CONF)
+	-tmux source $(TMUX_CONF) 2>/dev/null
+	-rm -rf $(HOME)/.config/claude-monitor
+	-rm -rf $(HOME)/.cache/claude-monitor
 	sudo pacman -R --noconfirm $(PKGNAME)
 
 # Remove build artifacts (local binary and AUR build directory)
