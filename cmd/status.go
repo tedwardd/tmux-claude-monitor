@@ -18,8 +18,8 @@ func runStatus() {
 	p := cache.Path(cfg.CachePath)
 	entry, err := cache.ReadFromPath(p)
 	if err != nil {
-		// Cache missing or unreadable — show fallback
-		fmt.Print(format.StatusLine(cache.Entry{Error: "no cache"}))
+		// Cache missing — daemon not started yet
+		fmt.Print(format.FallbackNoCache())
 		return
 	}
 

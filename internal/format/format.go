@@ -8,9 +8,14 @@ import (
 )
 
 const (
-	barWidth = 6
-	fallback = "#[fg=colour244]Claude: ??#[default]"
+	barWidth        = 6
+	fallback        = "#[fg=colour244]Claude: ??#[default]"
+	fallbackNoCache = "#[fg=colour244]Claude: --#[default]"
 )
+
+func FallbackNoCache() string {
+	return fallbackNoCache
+}
 
 func StatusLine(e cache.Entry) string {
 	if e.Error != "" || cache.IsStale(e) {
