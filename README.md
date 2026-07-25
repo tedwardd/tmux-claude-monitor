@@ -36,6 +36,31 @@ claude-monitor init
 
 This will verify your credentials, write a config file, patch your tmux config, and install a systemd user service. See [Manual setup](#manual-setup) below if you prefer to do any of these steps yourself.
 
+## Arch Linux
+
+Install via your AUR helper:
+
+```sh
+# Pre-built binary (faster install, no Go toolchain needed)
+paru -S tmux-claude-monitor-bin
+
+# Build from source
+paru -S tmux-claude-monitor
+```
+
+After install, enable the daemon:
+
+```sh
+systemctl --user enable --now claude-monitor
+```
+
+Then add to `~/.config/tmux/tmux.conf`:
+
+```
+set -g status-right-length 200
+set -g status-right '#(claude-monitor status) | %H:%M'
+```
+
 ## Commands
 
 | Command | Description |
