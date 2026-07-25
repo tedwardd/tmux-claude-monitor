@@ -1,0 +1,174 @@
+# .github/workflows/aur.yml
+name: Update AUR
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  aur-source:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set version
+        id: ver
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Compute source tarball checksum
+        id: sums
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          SHA=$(curl -sL "https://github.com/tedwardd/tmux-claude-monitor/archive/refs/tags/v${VERSION}.tar.gz" \
+            | sha256sum | awk '{print $1}')
+          echo "sha=${SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Patch PKGBUILD
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+          SHA: ${{ steps.sums.outputs.sha }}
+        run: |
+          cd packaging/aur/tmux-claude-monitor
+          sed -i "s/^pkgver=.*/pkgver=${VERSION}/" PKGBUILD
+          sed -i "s/^sha256sums=.*/sha256sums=('${SHA}')/" PKGBUILD
+
+      - name: Regenerate .SRCINFO
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+          SHA: ${{ steps.sums.outputs.sha }}
+        run: |
+          printf 'pkgbase = tmux-claude-monitor\n' > packaging/aur/tmux-claude-monitor/.SRCINFO
+          printf '\tpkgdesc = tmux status bar daemon displaying Claude Pro quota usage in real time\n' >> packaging/aur/tmux-claude-monitor/.SRCINFO
+          printf '\tpkgver = %s\n' "${VERSION}" >> packaging/aur/tmux-claude-monitor/.SRCINFO
+          printf '\tpkgrel = 1\n' >> packaging/aur/tmux-claude-monitor/.SRCINFO
+          printf '\turl = https://github.com/tedwardd/tmux-claude-monitor\n' >> packaging/aur/tmux-claude-monitor/.SRCINFO
+          printf '\tarch = x86_64\n' >> packaging/aur/tmux-claude-monitor/.SRCINFO
+          printf '\tarch = aarch64\n' >> packaging/aur/tmux-claude-monitor/.SRCINFO
+          printf '\tlicense = MIT\n' >> packaging/aur/tmux-claude-monitor/.SRCINFO
+          printf '\tmakedepends = go\n' >> packaging/aur/tmux-claude-monitor/.SRCINFO
+          printf '\tprovides = claude-monitor\n' >> packaging/aur/tmux-claude-monitor/.SRCINFO
+          printf '\tconflicts = tmux-claude-monitor-bin\n' >> packaging/aur/tmux-claude-monitor/.SRCINFO
+          printf '\tsource = tmux-claude-monitor-%s.tar.gz::https://github.com/tedwardd/tmux-claude-monitor/archive/refs/tags/v%s.tar.gz\n' "${VERSION}" "${VERSION}" >> packaging/aur/tmux-claude-monitor/.SRCINFO
+          printf '\tsha256sums = %s\n' "${SHA}" >> packaging/aur/tmux-claude-monitor/.SRCINFO
+          printf '\n' >> packaging/aur/tmux-claude-monitor/.SRCINFO
+          printf 'pkgname = tmux-claude-monitor\n' >> packaging/aur/tmux-claude-monitor/.SRCINFO
+
+      - name: Push to AUR
+        env:
+          AUR_SSH_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          GIT_AUTHOR_NAME: ${{ secrets.AUR_USERNAME }}
+          GIT_AUTHOR_EMAIL: ${{ secrets.AUR_EMAIL }}
+          GIT_COMMITTER_NAME: ${{ secrets.AUR_USERNAME }}
+          GIT_COMMITTER_EMAIL: ${{ secrets.AUR_EMAIL }}
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "${AUR_SSH_KEY}" > ~/.ssh/aur
+          chmod 600 ~/.ssh/aur
+          ssh-keyscan aur.archlinux.org >> ~/.ssh/known_hosts
+
+          cat >> ~/.ssh/config << 'SSHCONF'
+          Host aur.archlinux.org
+              User aur
+              IdentityFile ~/.ssh/aur
+          SSHCONF
+
+          git clone ssh://aur@aur.archlinux.org/tmux-claude-monitor.git /tmp/aur-source
+          cp packaging/aur/tmux-claude-monitor/PKGBUILD /tmp/aur-source/
+          cp packaging/aur/tmux-claude-monitor/.SRCINFO /tmp/aur-source/
+          cp packaging/aur/tmux-claude-monitor/claude-monitor.install /tmp/aur-source/
+          cd /tmp/aur-source
+          git add -A
+          git diff --cached --quiet && exit 0
+          git commit -m "chore: update to v${VERSION}"
+          git push
+
+  aur-bin:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set version
+        id: ver
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Compute binary checksums
+        id: sums
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          BASE="https://github.com/tedwardd/tmux-claude-monitor/releases/download/v${VERSION}"
+          SHA_AMD64=$(curl -sL "${BASE}/claude-monitor_${VERSION}_linux_amd64.tar.gz" \
+            | sha256sum | awk '{print $1}')
+          SHA_ARM64=$(curl -sL "${BASE}/claude-monitor_${VERSION}_linux_arm64.tar.gz" \
+            | sha256sum | awk '{print $1}')
+          echo "sha_amd64=${SHA_AMD64}" >> "$GITHUB_OUTPUT"
+          echo "sha_arm64=${SHA_ARM64}" >> "$GITHUB_OUTPUT"
+
+      - name: Patch PKGBUILD
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+          SHA_AMD64: ${{ steps.sums.outputs.sha_amd64 }}
+          SHA_ARM64: ${{ steps.sums.outputs.sha_arm64 }}
+        run: |
+          cd packaging/aur/tmux-claude-monitor-bin
+          sed -i "s/^pkgver=.*/pkgver=${VERSION}/" PKGBUILD
+          sed -i "s/^sha256sums_x86_64=.*/sha256sums_x86_64=('${SHA_AMD64}')/" PKGBUILD
+          sed -i "s/^sha256sums_aarch64=.*/sha256sums_aarch64=('${SHA_ARM64}')/" PKGBUILD
+
+      - name: Regenerate .SRCINFO
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+          SHA_AMD64: ${{ steps.sums.outputs.sha_amd64 }}
+          SHA_ARM64: ${{ steps.sums.outputs.sha_arm64 }}
+        run: |
+          printf 'pkgbase = tmux-claude-monitor-bin\n' > packaging/aur/tmux-claude-monitor-bin/.SRCINFO
+          printf '\tpkgdesc = tmux status bar daemon displaying Claude Pro quota usage in real time (pre-built binary)\n' >> packaging/aur/tmux-claude-monitor-bin/.SRCINFO
+          printf '\tpkgver = %s\n' "${VERSION}" >> packaging/aur/tmux-claude-monitor-bin/.SRCINFO
+          printf '\tpkgrel = 1\n' >> packaging/aur/tmux-claude-monitor-bin/.SRCINFO
+          printf '\turl = https://github.com/tedwardd/tmux-claude-monitor\n' >> packaging/aur/tmux-claude-monitor-bin/.SRCINFO
+          printf '\tarch = x86_64\n' >> packaging/aur/tmux-claude-monitor-bin/.SRCINFO
+          printf '\tarch = aarch64\n' >> packaging/aur/tmux-claude-monitor-bin/.SRCINFO
+          printf '\tlicense = MIT\n' >> packaging/aur/tmux-claude-monitor-bin/.SRCINFO
+          printf '\tprovides = claude-monitor\n' >> packaging/aur/tmux-claude-monitor-bin/.SRCINFO
+          printf '\tconflicts = tmux-claude-monitor\n' >> packaging/aur/tmux-claude-monitor-bin/.SRCINFO
+          printf '\tsource_x86_64 = claude-monitor-%s-x86_64.tar.gz::https://github.com/tedwardd/tmux-claude-monitor/releases/download/v%s/claude-monitor_%s_linux_amd64.tar.gz\n' "${VERSION}" "${VERSION}" "${VERSION}" >> packaging/aur/tmux-claude-monitor-bin/.SRCINFO
+          printf '\tsha256sums_x86_64 = %s\n' "${SHA_AMD64}" >> packaging/aur/tmux-claude-monitor-bin/.SRCINFO
+          printf '\tsource_aarch64 = claude-monitor-%s-aarch64.tar.gz::https://github.com/tedwardd/tmux-claude-monitor/releases/download/v%s/claude-monitor_%s_linux_arm64.tar.gz\n' "${VERSION}" "${VERSION}" "${VERSION}" >> packaging/aur/tmux-claude-monitor-bin/.SRCINFO
+          printf '\tsha256sums_aarch64 = %s\n' "${SHA_ARM64}" >> packaging/aur/tmux-claude-monitor-bin/.SRCINFO
+          printf '\n' >> packaging/aur/tmux-claude-monitor-bin/.SRCINFO
+          printf 'pkgname = tmux-claude-monitor-bin\n' >> packaging/aur/tmux-claude-monitor-bin/.SRCINFO
+
+      - name: Push to AUR
+        env:
+          AUR_SSH_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          GIT_AUTHOR_NAME: ${{ secrets.AUR_USERNAME }}
+          GIT_AUTHOR_EMAIL: ${{ secrets.AUR_EMAIL }}
+          GIT_COMMITTER_NAME: ${{ secrets.AUR_USERNAME }}
+          GIT_COMMITTER_EMAIL: ${{ secrets.AUR_EMAIL }}
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "${AUR_SSH_KEY}" > ~/.ssh/aur
+          chmod 600 ~/.ssh/aur
+          ssh-keyscan aur.archlinux.org >> ~/.ssh/known_hosts
+
+          cat >> ~/.ssh/config << 'SSHCONF'
+          Host aur.archlinux.org
+              User aur
+              IdentityFile ~/.ssh/aur
+          SSHCONF
+
+          git clone ssh://aur@aur.archlinux.org/tmux-claude-monitor-bin.git /tmp/aur-bin
+          cp packaging/aur/tmux-claude-monitor-bin/PKGBUILD /tmp/aur-bin/
+          cp packaging/aur/tmux-claude-monitor-bin/.SRCINFO /tmp/aur-bin/
+          cp packaging/aur/tmux-claude-monitor-bin/claude-monitor.install /tmp/aur-bin/
+          cd /tmp/aur-bin
+          git add -A
+          git diff --cached --quiet && exit 0
+          git commit -m "chore: update to v${VERSION}"
+          git push
