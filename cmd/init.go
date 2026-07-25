@@ -194,22 +194,24 @@ func patchTmuxConfig(path string) error {
 	}
 	content := string(data)
 
-	// Extract current status-right value
-	re := regexp.MustCompile(`(?m)^set\s+-g\s+status-right\s+'([^']*)'`)
+	// Extract current status-right value (match both single- and double-quoted forms)
+	re := regexp.MustCompile(`(?m)^set\s+-g\s+status-right\s+['"]([^'"]*)['"']`)
 	match := re.FindStringSubmatch(content)
 	existingRight := "#[fg=yellow]#(cut -d ' ' -f 1-3 /proc/loadavg)#[default] #[fg=white]%H:%M#[default]"
 	if len(match) > 1 {
 		existingRight = match[1]
 		content = re.ReplaceAllString(content, "")
 	}
+	// Escape any double quotes so the value is safe inside a double-quoted tmux string.
+	existingRight = strings.ReplaceAll(existingRight, `"`, `\"`)
 
 	exe := "claude-monitor"
 	block := fmt.Sprintf(`
 
 %s
 set -g status-right-length 200
-set -g status-right '%s #(  %s status)'
-bind-key F5 run-shell '%s refresh'
+set -g status-right "%s #(  %s status)"
+bind-key F5 run-shell "%s refresh"
 %s
 `, markerBegin, existingRight, exe, exe, markerEnd)
 
