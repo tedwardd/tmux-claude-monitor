@@ -11,11 +11,16 @@ import (
 const staleThreshold = 15 * time.Minute
 
 type Entry struct {
-	FetchedAt     time.Time `json:"fetched_at"`
-	MessagesUsed  int       `json:"messages_used"`
-	MessagesLimit int       `json:"messages_limit"`
-	ResetAt       time.Time `json:"reset_at"`
-	Error         string    `json:"error"`
+	FetchedAt          time.Time `json:"fetched_at"`
+	SessionUtilization float64   `json:"session_utilization"`
+	SessionResetsAt    time.Time `json:"session_resets_at"`
+	WeeklyUtilization  float64   `json:"weekly_utilization"`
+	WeeklyResetsAt     time.Time `json:"weekly_resets_at"`
+	ExtraUsageEnabled  bool      `json:"extra_usage_enabled"`
+	ExtraUsedDollars   float64   `json:"extra_used_dollars"`
+	ExtraLimitDollars  float64   `json:"extra_limit_dollars"`
+	ExtraUtilization   float64   `json:"extra_utilization"`
+	Error              string    `json:"error"`
 }
 
 func IsStale(e Entry) bool {

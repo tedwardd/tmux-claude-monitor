@@ -17,16 +17,19 @@ func StatusLine(e cache.Entry) string {
 		return fallback
 	}
 
-	pct := 0
-	if e.MessagesLimit > 0 {
-		pct = (e.MessagesUsed * 100) / e.MessagesLimit
+	pct := int(e.SessionUtilization)
+	color := colorCode(pct)
+	bar := blockBar(pct)
+	reset := e.SessionResetsAt.Local().Format("15:04")
+
+	s := fmt.Sprintf("%sClaude: %s %d%% ↺%s#[default]", color, bar, pct, reset)
+
+	if e.ExtraUsageEnabled {
+		extraColor := colorCode(int(e.ExtraUtilization))
+		s += fmt.Sprintf(" %s+$%.2f/$%.2f#[default]", extraColor, e.ExtraUsedDollars, e.ExtraLimitDollars)
 	}
 
-	color := colorCode(pct)
-	bar := blockBar(e.MessagesUsed, e.MessagesLimit)
-	reset := e.ResetAt.Local().Format("15:04")
-
-	return fmt.Sprintf("%sClaude: %s %d%% ↺%s#[default]", color, bar, pct, reset)
+	return s
 }
 
 func colorCode(pct int) string {
@@ -40,13 +43,13 @@ func colorCode(pct int) string {
 	}
 }
 
-func blockBar(used, limit int) string {
-	if limit == 0 {
-		return strings.Repeat("░", barWidth)
+func blockBar(pct int) string {
+	if pct < 0 {
+		pct = 0
 	}
-	filled := (used * barWidth) / limit
-	if filled > barWidth {
-		filled = barWidth
+	if pct > 100 {
+		pct = 100
 	}
+	filled := (pct * barWidth) / 100
 	return strings.Repeat("█", filled) + strings.Repeat("░", barWidth-filled)
 }

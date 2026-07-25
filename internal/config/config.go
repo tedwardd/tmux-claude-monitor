@@ -11,7 +11,6 @@ type Config struct {
 	PollIntervalSeconds int    `json:"poll_interval_seconds"`
 	CachePath           string `json:"cache_path"`
 	CredentialsPath     string `json:"credentials_path"`
-	OrgUUID             string `json:"org_uuid"`
 }
 
 func DefaultConfig() Config {
@@ -19,7 +18,6 @@ func DefaultConfig() Config {
 		PollIntervalSeconds: 300,
 		CachePath:           "~/.cache/claude-monitor/status.json",
 		CredentialsPath:     "~/.claude/.credentials.json",
-		OrgUUID:             "",
 	}
 }
 

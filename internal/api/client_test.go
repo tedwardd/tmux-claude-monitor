@@ -40,63 +40,58 @@ func TestReadCredentialsMissingFile(t *testing.T) {
 	}
 }
 
-func TestFetchBootstrap(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/bootstrap" {
-			http.Error(w, "not found", 404)
-			return
-		}
-		if r.Header.Get("Authorization") != "Bearer test-token" {
-			http.Error(w, "unauthorized", 401)
-			return
-		}
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"account": map[string]interface{}{
-				"organizationMemberships": []interface{}{
-					map[string]interface{}{"organization": map[string]interface{}{"uuid": "org-uuid-abc"}},
-				},
-			},
-		})
-	}))
-	defer srv.Close()
-
-	orgUUID, err := api.FetchBootstrapFromURL(srv.URL+"/api/bootstrap", "test-token")
-	if err != nil {
-		t.Fatalf("FetchBootstrap: %v", err)
-	}
-	if orgUUID != "org-uuid-abc" {
-		t.Errorf("orgUUID: got %q, want %q", orgUUID, "org-uuid-abc")
-	}
-}
-
 func TestFetchUsage(t *testing.T) {
-	resetTime := time.Now().Add(2 * time.Hour).UTC().Truncate(time.Second)
+	sessionReset := time.Now().Add(2 * time.Hour).UTC().Truncate(time.Second)
+	weeklyReset := time.Now().Add(7 * 24 * time.Hour).UTC().Truncate(time.Second)
+
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer test-token" {
 			http.Error(w, "unauthorized", 401)
 			return
 		}
+		if r.Header.Get("anthropic-beta") != "oauth-2025-04-20" {
+			http.Error(w, "missing beta header", 400)
+			return
+		}
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"raw_limits": map[string]interface{}{
-				"message_limit":      50,
-				"messages_remaining": 20,
-				"window_resets_at":   resetTime.Format(time.RFC3339),
+			"five_hour": map[string]interface{}{
+				"utilization": 84.0,
+				"resets_at":   sessionReset.Format(time.RFC3339),
+			},
+			"seven_day": map[string]interface{}{
+				"utilization": 15.0,
+				"resets_at":   weeklyReset.Format(time.RFC3339),
 			},
 		})
 	}))
 	defer srv.Close()
 
-	usage, err := api.FetchUsageFromURL(srv.URL, "org-uuid-abc", "test-token")
+	usage, err := api.FetchUsageFromURL(srv.URL, "test-token")
 	if err != nil {
 		t.Fatalf("FetchUsage: %v", err)
 	}
-	if usage.MessagesLimit != 50 {
-		t.Errorf("MessagesLimit: got %d", usage.MessagesLimit)
+	if usage.SessionUtilization != 84.0 {
+		t.Errorf("SessionUtilization: got %f, want 84.0", usage.SessionUtilization)
 	}
-	if usage.MessagesUsed != 30 { // limit - remaining = 50 - 20
-		t.Errorf("MessagesUsed: got %d", usage.MessagesUsed)
+	if usage.WeeklyUtilization != 15.0 {
+		t.Errorf("WeeklyUtilization: got %f, want 15.0", usage.WeeklyUtilization)
 	}
-	if !usage.ResetAt.Equal(resetTime) {
-		t.Errorf("ResetAt: got %v, want %v", usage.ResetAt, resetTime)
+	if !usage.SessionResetsAt.Equal(sessionReset) {
+		t.Errorf("SessionResetsAt: got %v, want %v", usage.SessionResetsAt, sessionReset)
+	}
+	if !usage.WeeklyResetsAt.Equal(weeklyReset) {
+		t.Errorf("WeeklyResetsAt: got %v, want %v", usage.WeeklyResetsAt, weeklyReset)
+	}
+}
+
+func TestFetchUsageHTTP401(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "unauthorized", 401)
+	}))
+	defer srv.Close()
+
+	_, err := api.FetchUsageFromURL(srv.URL, "bad-token")
+	if err == nil {
+		t.Error("expected error for HTTP 401")
 	}
 }

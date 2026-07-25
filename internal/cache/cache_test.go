@@ -18,14 +18,16 @@ func tempCachePath(t *testing.T) string {
 func TestWriteRead(t *testing.T) {
 	p := tempCachePath(t)
 	now := time.Now().UTC().Truncate(time.Second)
-	reset := now.Add(2 * time.Hour)
+	sessionReset := now.Add(2 * time.Hour)
+	weeklyReset := now.Add(7 * 24 * time.Hour)
 
 	entry := cache.Entry{
-		FetchedAt:     now,
-		MessagesUsed:  30,
-		MessagesLimit: 50,
-		ResetAt:       reset,
-		Error:         "",
+		FetchedAt:          now,
+		SessionUtilization: 84.0,
+		SessionResetsAt:    sessionReset,
+		WeeklyUtilization:  15.0,
+		WeeklyResetsAt:     weeklyReset,
+		Error:              "",
 	}
 
 	if err := cache.WriteToPath(p, entry); err != nil {
@@ -37,11 +39,17 @@ func TestWriteRead(t *testing.T) {
 		t.Fatalf("Read: %v", err)
 	}
 
-	if got.MessagesUsed != 30 || got.MessagesLimit != 50 {
-		t.Errorf("got %+v", got)
+	if got.SessionUtilization != 84.0 {
+		t.Errorf("SessionUtilization: got %f", got.SessionUtilization)
+	}
+	if got.WeeklyUtilization != 15.0 {
+		t.Errorf("WeeklyUtilization: got %f", got.WeeklyUtilization)
 	}
 	if !got.FetchedAt.Equal(now) {
 		t.Errorf("FetchedAt: got %v, want %v", got.FetchedAt, now)
+	}
+	if !got.SessionResetsAt.Equal(sessionReset) {
+		t.Errorf("SessionResetsAt: got %v, want %v", got.SessionResetsAt, sessionReset)
 	}
 }
 
@@ -69,9 +77,8 @@ func TestWriteCreatesParentDir(t *testing.T) {
 	p := filepath.Join(dir, "subdir", "status.json")
 
 	entry := cache.Entry{
-		FetchedAt:     time.Now().UTC(),
-		MessagesUsed:  1,
-		MessagesLimit: 50,
+		FetchedAt:          time.Now().UTC(),
+		SessionUtilization: 50.0,
 	}
 
 	if err := cache.WriteToPath(p, entry); err != nil {

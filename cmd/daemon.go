@@ -10,6 +10,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/godbus/dbus/v5"
+
 	"claude-monitor/internal/api"
 	"claude-monitor/internal/cache"
 	"claude-monitor/internal/config"
@@ -38,41 +40,30 @@ func runDaemon() {
 		os.Exit(1)
 	}
 
-	if cfg.OrgUUID == "" {
-		uuid, err := api.FetchBootstrap(creds.AccessToken)
-		if err != nil {
-			writeErrorCache(cfg, fmt.Sprintf("bootstrap: %v", err))
-			fmt.Fprintf(os.Stderr, "daemon: bootstrap: %v\n", err)
-			os.Remove(pidPath)
-			os.Exit(1)
-		}
-		cfg.OrgUUID = uuid
-		if err := config.Save(cfg); err != nil {
-			fmt.Fprintf(os.Stderr, "daemon: save config: %v\n", err)
-		}
-	}
-
 	usr1 := make(chan os.Signal, 1)
 	signal.Notify(usr1, syscall.SIGUSR1)
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGTERM, syscall.SIGINT)
 
+	resume := make(chan struct{}, 1)
+	startResumeWatcher(resume)
+
 	consecutiveFails := 0
 	var ticker *time.Ticker
 
 	fetch := func() {
-		usage, err := api.FetchUsage(creds.AccessToken, cfg.OrgUUID)
+		usage, err := api.FetchUsage(creds.AccessToken)
 		p := cache.Path(cfg.CachePath)
 		if err != nil {
 			cache.WriteToPath(p, cache.Entry{FetchedAt: time.Now().UTC(), Error: err.Error()})
-			if ticker != nil {
-				backoff := time.Duration(30*(1<<consecutiveFails)) * time.Second
-				if backoff > 300*time.Second {
-					backoff = 300 * time.Second
-				}
-				ticker.Reset(backoff)
+			backoff := time.Duration(30*(1<<consecutiveFails)) * time.Second
+			if backoff > 300*time.Second {
+				backoff = 300 * time.Second
 			}
 			consecutiveFails++
+			if ticker != nil {
+				ticker.Reset(backoff)
+			}
 			return
 		}
 		consecutiveFails = 0
@@ -80,10 +71,15 @@ func runDaemon() {
 			ticker.Reset(time.Duration(cfg.PollIntervalSeconds) * time.Second)
 		}
 		cache.WriteToPath(p, cache.Entry{
-			FetchedAt:     time.Now().UTC(),
-			MessagesUsed:  usage.MessagesUsed,
-			MessagesLimit: usage.MessagesLimit,
-			ResetAt:       usage.ResetAt,
+			FetchedAt:          time.Now().UTC(),
+			SessionUtilization: usage.SessionUtilization,
+			SessionResetsAt:    usage.SessionResetsAt,
+			WeeklyUtilization:  usage.WeeklyUtilization,
+			WeeklyResetsAt:     usage.WeeklyResetsAt,
+			ExtraUsageEnabled:  usage.ExtraUsageEnabled,
+			ExtraUsedDollars:   usage.ExtraUsedDollars,
+			ExtraLimitDollars:  usage.ExtraLimitDollars,
+			ExtraUtilization:   usage.ExtraUtilization,
 		})
 	}
 
@@ -100,6 +96,9 @@ func runDaemon() {
 		case <-ticker.C:
 			fetch()
 		case <-usr1:
+			fetch()
+		case <-resume:
+			time.Sleep(5 * time.Second) // let network reconnect after wake
 			fetch()
 		case <-quit:
 			return
@@ -128,4 +127,68 @@ func expandHome(p string) string {
 		return filepath.Join(home, p[2:])
 	}
 	return p
+}
+
+// startResumeWatcher tries to use the D-Bus login1 PrepareForSleep signal for
+// immediate wake detection. Falls back to clock-drift polling if unavailable.
+func startResumeWatcher(resume chan<- struct{}) {
+	if tryDBusResumeWatcher(resume) {
+		return
+	}
+	go watchSleep(resume)
+}
+
+func tryDBusResumeWatcher(resume chan<- struct{}) bool {
+	conn, err := dbus.ConnectSystemBus()
+	if err != nil {
+		return false
+	}
+	err = conn.AddMatchSignal(
+		dbus.WithMatchInterface("org.freedesktop.login1.Manager"),
+		dbus.WithMatchMember("PrepareForSleep"),
+	)
+	if err != nil {
+		conn.Close()
+		return false
+	}
+	signals := make(chan *dbus.Signal, 1)
+	conn.Signal(signals)
+	go func() {
+		defer conn.Close()
+		for sig := range signals {
+			if len(sig.Body) == 0 {
+				continue
+			}
+			sleeping, ok := sig.Body[0].(bool)
+			if ok && !sleeping {
+				select {
+				case resume <- struct{}{}:
+				default:
+				}
+			}
+		}
+	}()
+	return true
+}
+
+// watchSleep is the fallback resume detector used when D-Bus is unavailable.
+// It detects wake by comparing wall-clock elapsed time against monotonic elapsed
+// time — the monotonic clock is paused during sleep, the wall clock is not.
+func watchSleep(resume chan<- struct{}) {
+	const checkInterval = 30 * time.Second
+	const sleepThreshold = 15 * time.Second
+	prev := time.Now()
+	for {
+		time.Sleep(checkInterval)
+		now := time.Now()
+		monotonicElapsed := now.Sub(prev)
+		wallElapsed := now.Round(0).Sub(prev.Round(0)) // Round(0) strips monotonic
+		if wallElapsed-monotonicElapsed > sleepThreshold {
+			select {
+			case resume <- struct{}{}:
+			default:
+			}
+		}
+		prev = now
+	}
 }

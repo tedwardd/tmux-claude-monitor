@@ -15,7 +15,6 @@ func TestRoundTrip(t *testing.T) {
 		PollIntervalSeconds: 120,
 		CachePath:           "~/.cache/claude-monitor/status.json",
 		CredentialsPath:     "~/.claude/.credentials.json",
-		OrgUUID:             "test-uuid-1234",
 	}
 
 	if err := config.Save(cfg); err != nil {
