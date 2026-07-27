@@ -117,6 +117,24 @@ When a fetch fails, the error goes into the cache so the status bar shows `??`, 
 
 To catch a laptop coming out of sleep, the Linux daemon listens for the D-Bus `PrepareForSleep` signal from `org.freedesktop.login1.Manager` and refreshes within about 5 seconds. macOS has no equivalent signal reachable without cgo, so the daemon there compares wall-clock against monotonic elapsed time and treats a gap as a wake. Linux uses the same method when D-Bus is unavailable.
 
+## Network access
+
+The daemon opens exactly one connection: `GET https://api.anthropic.com/api/oauth/usage`, over TCP 443. There is no telemetry, no update check, and no second endpoint. `claude-monitor status` never touches the network at all, it only reads the cache file.
+
+Every release archive contains `claude-monitor.lsrules`, a [Little Snitch](https://obdev.at/products/littlesnitch/) rule group that states this in a form the firewall enforces:
+
+```sh
+open claude-monitor.lsrules   # from the extracted archive, or the Caskroom directory
+```
+
+The point is not convenience. Because the group is the complete list of what the program needs, any connection attempt it does not cover is a signal that something changed, and Little Snitch will say so rather than allowing it quietly. The rule carries the reason for the connection in its `notes` field, so the policy documents itself.
+
+Two things worth knowing:
+
+The rule matches on destination rather than on the executable, using `process: "any"`. Homebrew installs to a versioned directory that changes on every upgrade, and Little Snitch matches the full executable path with no wildcard support, so a path-based rule would need re-approving after each upgrade. Scoping to `api.anthropic.com:443` avoids that. If you would rather pin the process as well, add a second rule with the output of `which claude-monitor` resolved through `readlink`, and expect to update it when the version changes.
+
+DNS is not in the group. In testing the daemon's hostname lookups went through the system resolver rather than leaving the process directly, so no rule was needed. If you do see a DNS prompt attributed to `claude-monitor`, add a rule allowing `remote: "dns-servers"` for it.
+
 ## Configuration
 
 Config lives at `~/.config/claude-monitor/config.json` and is created by `init`:
