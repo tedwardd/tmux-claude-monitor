@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -16,7 +17,7 @@ var allowedRuleKeys = map[string]bool{
 
 func marshalGroup(t *testing.T, paths []string, strict bool) map[string]any {
 	t.Helper()
-	data, err := json.Marshal(buildLSGroup(paths, strict))
+	data, err := json.Marshal(buildLSGroup(localDescription, paths, denyFor(strict)))
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
@@ -31,7 +32,7 @@ func marshalGroup(t *testing.T, paths []string, strict bool) map[string]any {
 // from this project must never widen access for anything but this binary.
 func TestLSGroupNeverGrantsAccessToAnyProcess(t *testing.T) {
 	for _, strict := range []bool{false, true} {
-		g := buildLSGroup([]string{"/opt/homebrew/bin/claude-monitor"}, strict)
+		g := buildLSGroup(localDescription, []string{"/opt/homebrew/bin/claude-monitor"}, denyFor(strict))
 		for _, r := range g.Rules {
 			if r.Process == "any" || r.Process == "" {
 				t.Errorf("strict=%v: rule grants access to process %q, must name this binary", strict, r.Process)
@@ -45,7 +46,7 @@ func TestLSGroupNeverGrantsAccessToAnyProcess(t *testing.T) {
 
 func TestLSGroupCoversEveryPath(t *testing.T) {
 	paths := []string{"/opt/homebrew/bin/claude-monitor", "/opt/homebrew/Caskroom/claude-monitor/1.2.3/claude-monitor"}
-	g := buildLSGroup(paths, false)
+	g := buildLSGroup(localDescription, paths, denyDisabled)
 
 	for _, p := range paths {
 		var allowed bool
@@ -61,7 +62,7 @@ func TestLSGroupCoversEveryPath(t *testing.T) {
 }
 
 func TestLSGroupOnlyAllowsTheUsageEndpoint(t *testing.T) {
-	g := buildLSGroup([]string{"/usr/bin/claude-monitor"}, true)
+	g := buildLSGroup(localDescription, []string{"/usr/bin/claude-monitor"}, denyEnabled)
 	for _, r := range g.Rules {
 		if r.Action != "allow" {
 			continue
@@ -79,7 +80,7 @@ func TestLSGroupOnlyAllowsTheUsageEndpoint(t *testing.T) {
 // working setup; with it they enforce.
 func TestLSGroupDenyRulesGatedOnStrict(t *testing.T) {
 	for _, tc := range []struct{ strict, wantDisabled bool }{{false, true}, {true, false}} {
-		g := buildLSGroup([]string{"/usr/bin/claude-monitor"}, tc.strict)
+		g := buildLSGroup(localDescription, []string{"/usr/bin/claude-monitor"}, denyFor(tc.strict))
 		var denies int
 		for _, r := range g.Rules {
 			if r.Action != "deny" {
@@ -161,5 +162,80 @@ func TestExecutablePathsReturnsAtLeastOneAbsolutePath(t *testing.T) {
 			t.Errorf("duplicate path %q", p)
 		}
 		seen[p] = true
+	}
+}
+
+func denyFor(strict bool) denyPolicy {
+	if strict {
+		return denyEnabled
+	}
+	return denyDisabled
+}
+
+// The published group must be usable on any Mac, so it names deterministic
+// install paths and never falls back to widening the process.
+func TestReleaseGroupCoversBothHomebrewPrefixes(t *testing.T) {
+	g := buildLSGroup(releaseDescription("v1.2.3"), releasePaths("v1.2.3"), denyOmit)
+
+	want := []string{
+		"/opt/homebrew/bin/claude-monitor",
+		"/opt/homebrew/Caskroom/claude-monitor/1.2.3/claude-monitor",
+		"/usr/local/bin/claude-monitor",
+		"/usr/local/Caskroom/claude-monitor/1.2.3/claude-monitor",
+	}
+	got := map[string]bool{}
+	for _, r := range g.Rules {
+		got[r.Process] = true
+		if r.Process == "any" {
+			t.Fatal("published group must never grant access to any process")
+		}
+	}
+	for _, w := range want {
+		if !got[w] {
+			t.Errorf("published group missing %s", w)
+		}
+	}
+	if len(g.Rules) != len(want) {
+		t.Errorf("got %d rules, want %d (allow only, no deny rules)", len(g.Rules), len(want))
+	}
+}
+
+// A leading v must not leak into a Caskroom path; Homebrew directories are bare
+// version numbers.
+func TestReleasePathsStripLeadingV(t *testing.T) {
+	for _, v := range []string{"v9.9.9", "9.9.9"} {
+		for _, p := range releasePaths(v) {
+			if strings.Contains(p, "/v9.9.9/") {
+				t.Errorf("version %q produced path with a v prefix: %s", v, p)
+			}
+		}
+	}
+}
+
+// A subscription that silently denied traffic would be a bad surprise.
+func TestReleaseGroupHasNoDenyRules(t *testing.T) {
+	for _, r := range buildLSGroup(releaseDescription("1.0.0"), releasePaths("1.0.0"), denyOmit).Rules {
+		if r.Action != "allow" {
+			t.Errorf("published group contains a %q rule", r.Action)
+		}
+	}
+}
+
+func TestSubscribeURIIsWellFormed(t *testing.T) {
+	uri := subscribeURI()
+	if !strings.HasPrefix(uri, "x-littlesnitch:subscribe-rules?url=") {
+		t.Errorf("unexpected URI: %s", uri)
+	}
+	if strings.Contains(uri, " ") {
+		t.Errorf("URI contains an unescaped space: %s", uri)
+	}
+	// The URL must survive escaping intact.
+	q := strings.TrimPrefix(uri, "x-littlesnitch:subscribe-rules?url=")
+	decoded, err := url.QueryUnescape(q)
+	if err != nil {
+		t.Fatalf("query unescape: %v", err)
+	}
+	if decoded != subscriptionURL {
+		t.Errorf("round trip gave %q, want %q", decoded, subscriptionURL)
 	}
 }

@@ -122,26 +122,31 @@ To catch a laptop coming out of sleep, the Linux daemon listens for the D-Bus `P
 
 The daemon opens exactly one connection: `GET https://api.anthropic.com/api/oauth/usage`, over TCP 443. There is no telemetry, no update check, and no second endpoint. `claude-monitor status` never touches the network at all, it only reads the cache file.
 
-`claude-monitor lsrules` prints a [Little Snitch](https://obdev.at/products/littlesnitch/) rule group that states this in a form the firewall enforces:
+### Little Snitch
+
+Each release publishes a [Little Snitch](https://obdev.at/products/littlesnitch/) rule group covering every connection the daemon makes. Subscribe to it once:
 
 ```sh
-claude-monitor lsrules > claude-monitor.lsrules
-open claude-monitor.lsrules
+claude-monitor lsrules --subscribe
 ```
 
-Because the group is the complete list of what the program needs, any connection it does not cover is a signal that something changed, and Little Snitch will say so rather than allowing it quietly. Each rule carries the reason for the connection in its `notes` field, so the policy explains itself to someone who is not going to read the source.
+That hands Little Snitch this URL, which always resolves to the newest release:
 
-The rules name this binary by absolute path and grant nothing to anything else. That is why the group is generated rather than shipped: the path depends on how you installed, and a file checked into this repository could only widen the rule to cover every process on your machine to stay portable, which is not a trade a project should make on your behalf.
+```
+https://github.com/tedwardd/tmux-claude-monitor/releases/latest/download/claude-monitor.lsrules
+```
 
-Little Snitch matches on the full executable path and supports no wildcards, so the group covers both the fixed path in your Homebrew prefix and the versioned directory it resolves to. Re-run the command after an upgrade to refresh the versioned entry.
+Subscribing rather than importing matters. Little Snitch matches on the full executable path and supports no wildcards, and Homebrew installs to a directory named after the version, so a fixed rule stops matching the moment you upgrade. Until the new path is approved every fetch waits for the 30 second timeout and the status bar falls back to `??`. A subscription refreshes itself, so each release's paths arrive without you doing anything.
 
-`--strict` also enables deny rules for anything else this binary might attempt, which turns the allowlist into a boundary rather than a description:
+The published group names the four concrete install locations, the fixed `bin` symlink and the versioned `Caskroom` directory under both the Apple Silicon and Intel Homebrew prefixes. It grants nothing to any other program. Each rule carries the reason for the connection in its `notes` field, so the policy explains itself to someone who is not going to read the source.
+
+It is allow-only on purpose: a subscription that silently denied traffic would be a poor surprise. To also forbid everything else, generate a local group for your own install:
 
 ```sh
 claude-monitor lsrules --strict > claude-monitor.lsrules
 ```
 
-Those deny rules are present but disabled without `--strict`, so importing the default group cannot break a working setup. Enable them once you have confirmed the allow rules cover your install.
+That names the paths of the binary you ran it from and adds deny rules for anything else it might attempt, turning the allowlist into a boundary rather than a description. Without `--strict` those deny rules are emitted disabled. Note that Little Snitch 6 has no way to import a `.lsrules` file from disk, so a local group has to be entered through its interface, using this output as the specification. Re-run it after an upgrade, since the versioned path will have changed.
 
 DNS is deliberately absent. The daemon's hostname lookups went through the system resolver rather than leaving the process, so no rule was needed. If you see a DNS prompt attributed to `claude-monitor`, add a rule allowing `remote: "dns-servers"` for it.
 

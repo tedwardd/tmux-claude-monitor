@@ -67,3 +67,7 @@ release:
   github:
     owner: tedwardd
     name: tmux-claude-monitor
+  # Uploaded under a stable latest/download URL so a Little Snitch subscription
+  # follows each release without being reconfigured.
+  extra_files:
+    - glob: ./claude-monitor.lsrules

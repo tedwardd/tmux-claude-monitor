@@ -30,6 +30,13 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      # The published rule group names the Caskroom paths for this version, so it
+      # has to be rendered after the tag is known and before goreleaser uploads.
+      - name: Render Little Snitch rule group
+        env:
+          NEW_TAG: ${{ steps.tag.outputs.new_tag }}
+        run: go run . lsrules --release "$NEW_TAG" > claude-monitor.lsrules
+
       - uses: goreleaser/goreleaser-action@v6
         with:
           version: "~> v2"
