@@ -155,6 +155,33 @@ func defaultStatusRight() string {
 	return "#[fg=yellow]" + loadavg + "#[default] #[fg=white]%H:%M#[default]"
 }
 
+// statusRightRe matches a quoted status-right assignment. Each quote style needs
+// its own alternative: RE2 has no backreferences, and a combined ['"] class lets a
+// value opened with ' terminate on an embedded ", which truncates the capture and
+// leaves the rest of the line behind.
+var statusRightRe = regexp.MustCompile(`(?m)^set\s+-g\s+status-right\s+(?:'([^']*)'|"([^"]*)")[ \t]*$`)
+
+// escapeTmuxDoubleQuoted prepares a value for embedding in a double-quoted tmux
+// string. tmux expands backslash escapes there, so the escape character has to be
+// doubled before the quotes are escaped.
+func escapeTmuxDoubleQuoted(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	return strings.ReplaceAll(s, `"`, `\"`)
+}
+
+// backupTmuxConfig keeps a copy before rewriting, since this edits a file the user
+// maintains by hand.
+func backupTmuxConfig(path string) error {
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path+".claude-monitor.bak", data, 0644)
+}
+
 func patchTmuxConfig(path string) error {
 	const markerBegin = "# claude-monitor begin"
 	const markerEnd = "# claude-monitor end"
@@ -169,16 +196,17 @@ func patchTmuxConfig(path string) error {
 	}
 	content := string(data)
 
-	// Extract current status-right value (match both single- and double-quoted forms)
-	re := regexp.MustCompile(`(?m)^set\s+-g\s+status-right\s+['"]([^'"]*)['"']`)
-	match := re.FindStringSubmatch(content)
-	existingRight := defaultStatusRight()
-	if len(match) > 1 {
-		existingRight = match[1]
-		content = re.ReplaceAllString(content, "")
+	if err := backupTmuxConfig(path); err != nil {
+		return fmt.Errorf("back up config: %w", err)
 	}
-	// Escape any double quotes so the value is safe inside a double-quoted tmux string.
-	existingRight = strings.ReplaceAll(existingRight, `"`, `\"`)
+
+	existingRight := defaultStatusRight()
+	if match := statusRightRe.FindStringSubmatch(content); match != nil {
+		// Exactly one of the two quote alternatives captures.
+		existingRight = match[1] + match[2]
+		content = statusRightRe.ReplaceAllString(content, "")
+	}
+	existingRight = escapeTmuxDoubleQuoted(existingRight)
 
 	exe := "claude-monitor"
 	block := fmt.Sprintf(`
