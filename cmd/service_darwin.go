@@ -139,20 +139,9 @@ func launchctl(args ...string) ([]byte, error) {
 // PATH entry is preferred over the resolved binary so a Homebrew upgrade doesn't
 // leave the agent pointing into an old versioned directory.
 func serviceProgram() (string, error) {
-	exe, err := os.Executable()
+	paths, err := executablePaths()
 	if err != nil {
 		return "", err
 	}
-	resolved, err := filepath.EvalSymlinks(exe)
-	if err != nil {
-		resolved = exe
-	}
-	if linked, err := exec.LookPath(filepath.Base(resolved)); err == nil {
-		if abs, err := filepath.Abs(linked); err == nil {
-			if same, err := filepath.EvalSymlinks(abs); err == nil && same == resolved {
-				return abs, nil
-			}
-		}
-	}
-	return resolved, nil
+	return paths[0], nil
 }

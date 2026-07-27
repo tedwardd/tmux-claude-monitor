@@ -55,6 +55,11 @@ homebrew_casks:
       The daemon reads your Claude Code OAuth token from the login keychain.
       If macOS asks whether security can access it, choose "Always Allow".
 
+      Little Snitch users can generate a rule group scoped to this install,
+      covering every connection the daemon makes:
+
+        claude-monitor lsrules > claude-monitor.lsrules && open claude-monitor.lsrules
+
 checksum:
   name_template: checksums.txt
 
@@ -62,3 +67,7 @@ release:
   github:
     owner: tedwardd
     name: tmux-claude-monitor
+  # Uploaded under a stable latest/download URL so a Little Snitch subscription
+  # follows each release without being reconfigured.
+  extra_files:
+    - glob: ./claude-monitor.lsrules

@@ -21,6 +21,8 @@ func Execute() {
 		runRefresh()
 	case "init":
 		runInit()
+	case "lsrules":
+		runLSRules()
 	case "--help", "-h", "help":
 		printUsage()
 	default:
@@ -44,5 +46,6 @@ Commands:
   daemon   Start background poller (writes cache every 5 min)
   status   Print tmux-formatted usage string (reads cache)
   refresh  Signal daemon for immediate fetch
+  lsrules  Explain the Little Snitch rule group; --subscribe to add it
 `)
 }
