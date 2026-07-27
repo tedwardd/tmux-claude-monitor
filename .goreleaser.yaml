@@ -18,14 +18,6 @@ archives:
   - formats:
       - tar.gz
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
-    # Setting files replaces the defaults, so the usual LICENSE and README have
-    # to be listed again alongside the addition.
-    files:
-      - LICENSE*
-      - README*
-      - src: packaging/littlesnitch/*.lsrules
-        dst: .
-        strip_parent: true
 
 homebrew_casks:
   - name: claude-monitor
@@ -63,11 +55,10 @@ homebrew_casks:
       The daemon reads your Claude Code OAuth token from the login keychain.
       If macOS asks whether security can access it, choose "Always Allow".
 
-      Little Snitch users: a rule group covering every connection the daemon
-      makes ships alongside the binary. Import it to stop the per-upgrade
-      prompt:
+      Little Snitch users can generate a rule group scoped to this install,
+      covering every connection the daemon makes:
 
-        open "#{staged_path}/claude-monitor.lsrules"
+        claude-monitor lsrules > claude-monitor.lsrules && open claude-monitor.lsrules
 
 checksum:
   name_template: checksums.txt

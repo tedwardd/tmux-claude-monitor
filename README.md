@@ -98,6 +98,7 @@ On macOS the daemon reads your token from the login keychain. Depending on how t
 | `claude-monitor init` | One-time setup |
 | `claude-monitor status` | Print the current status string (called by tmux) |
 | `claude-monitor refresh` | Signal the daemon for an immediate fetch |
+| `claude-monitor lsrules` | Print a Little Snitch rule group for this install (see [Network access](#network-access)) |
 | `claude-monitor daemon` | Run the background poller (managed by systemd or launchd) |
 
 `init` takes two flags:
@@ -121,19 +122,28 @@ To catch a laptop coming out of sleep, the Linux daemon listens for the D-Bus `P
 
 The daemon opens exactly one connection: `GET https://api.anthropic.com/api/oauth/usage`, over TCP 443. There is no telemetry, no update check, and no second endpoint. `claude-monitor status` never touches the network at all, it only reads the cache file.
 
-Every release archive contains `claude-monitor.lsrules`, a [Little Snitch](https://obdev.at/products/littlesnitch/) rule group that states this in a form the firewall enforces:
+`claude-monitor lsrules` prints a [Little Snitch](https://obdev.at/products/littlesnitch/) rule group that states this in a form the firewall enforces:
 
 ```sh
-open claude-monitor.lsrules   # from the extracted archive, or the Caskroom directory
+claude-monitor lsrules > claude-monitor.lsrules
+open claude-monitor.lsrules
 ```
 
-The point is not convenience. Because the group is the complete list of what the program needs, any connection attempt it does not cover is a signal that something changed, and Little Snitch will say so rather than allowing it quietly. The rule carries the reason for the connection in its `notes` field, so the policy documents itself.
+Because the group is the complete list of what the program needs, any connection it does not cover is a signal that something changed, and Little Snitch will say so rather than allowing it quietly. Each rule carries the reason for the connection in its `notes` field, so the policy explains itself to someone who is not going to read the source.
 
-Two things worth knowing:
+The rules name this binary by absolute path and grant nothing to anything else. That is why the group is generated rather than shipped: the path depends on how you installed, and a file checked into this repository could only widen the rule to cover every process on your machine to stay portable, which is not a trade a project should make on your behalf.
 
-The rule matches on destination rather than on the executable, using `process: "any"`. Homebrew installs to a versioned directory that changes on every upgrade, and Little Snitch matches the full executable path with no wildcard support, so a path-based rule would need re-approving after each upgrade. Scoping to `api.anthropic.com:443` avoids that. If you would rather pin the process as well, add a second rule with the output of `which claude-monitor` resolved through `readlink`, and expect to update it when the version changes.
+Little Snitch matches on the full executable path and supports no wildcards, so the group covers both the fixed path in your Homebrew prefix and the versioned directory it resolves to. Re-run the command after an upgrade to refresh the versioned entry.
 
-DNS is not in the group. In testing the daemon's hostname lookups went through the system resolver rather than leaving the process directly, so no rule was needed. If you do see a DNS prompt attributed to `claude-monitor`, add a rule allowing `remote: "dns-servers"` for it.
+`--strict` also enables deny rules for anything else this binary might attempt, which turns the allowlist into a boundary rather than a description:
+
+```sh
+claude-monitor lsrules --strict > claude-monitor.lsrules
+```
+
+Those deny rules are present but disabled without `--strict`, so importing the default group cannot break a working setup. Enable them once you have confirmed the allow rules cover your install.
+
+DNS is deliberately absent. The daemon's hostname lookups went through the system resolver rather than leaving the process, so no rule was needed. If you see a DNS prompt attributed to `claude-monitor`, add a rule allowing `remote: "dns-servers"` for it.
 
 ## Configuration
 
