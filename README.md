@@ -5,12 +5,26 @@ A tmux status bar daemon that displays your [Claude Pro](https://claude.ai) quot
 ## What it shows
 
 ```
-S:42% W:23% +$8.50
+Claude: ███░░░ 52% ↺15:20 +$16.45/$80.00
 ```
 
-- **S:** — current session utilization
-- **W:** — weekly utilization
-- **+$8.50** — extra (overage) usage, shown only when active
+| Component | Meaning |
+|---|---|
+| `███░░░` | Session quota used, drawn as six blocks |
+| `52%` | Session utilization |
+| `↺15:20` | Local time the session quota resets |
+| `+$16.45/$80.00` | Extra usage against your monthly limit, shown only while extra usage is enabled on the account |
+
+The text is green below 70%, yellow from 70%, and red from 90%. Any component can be switched off, see [Display options](#display-options).
+
+Two placeholders stand in when there is no reading to show:
+
+| Placeholder | Cause |
+|---|---|
+| `Claude: --` | No cache file, so the daemon has not run yet |
+| `Claude: ??` | The last fetch failed, or the cache is older than 15 minutes |
+
+Weekly usage is fetched and kept in the cache, but nothing renders it in the status line yet.
 
 ## Prerequisites
 
@@ -84,11 +98,20 @@ On macOS the daemon reads your token from the login keychain. Depending on how t
 | `claude-monitor refresh` | Signal the daemon for an immediate fetch |
 | `claude-monitor daemon` | Run the background poller (managed by systemd or launchd) |
 
+`init` takes two flags:
+
+| Flag | Effect |
+|---|---|
+| `--force` | Redo every step even if the config, tmux block, or service is already in place |
+| `--discover` | Check auth, print the raw usage API response, and stop without changing anything |
+
 **Manual refresh keybinding:** `<prefix> F5` — added to your tmux config by `init`.
 
 ## How it works
 
 A background service polls the Claude API every 5 minutes and writes a cache file. The tmux status bar reads from that cache via `claude-monitor status`. The service is a systemd user service on Linux and a launchd user agent on macOS.
+
+When a fetch fails, the error goes into the cache so the status bar shows `??`, and the next attempt backs off starting at 30 seconds and doubling up to 5 minutes. The interval returns to normal on the first success.
 
 To catch a laptop coming out of sleep, the Linux daemon listens for the D-Bus `PrepareForSleep` signal from `org.freedesktop.login1.Manager` and refreshes within about 5 seconds. macOS has no equivalent signal reachable without cgo, so the daemon there compares wall-clock against monotonic elapsed time and treats a gap as a wake. Linux uses the same method when D-Bus is unavailable.
 
@@ -184,15 +207,17 @@ All paths support `~/` expansion. The config is loaded by both the daemon and th
 
 ### Step 3 — tmux config
 
-`init` appends the following block to `~/.config/tmux/tmux.conf`, preserving any existing `status-right` content by prepending it:
+`init` patches an existing `~/.tmux.conf` or `~/.config/tmux/tmux.conf`, falling back to the latter. It copies the file to `<path>.claude-monitor.bak` first, then appends this block, preserving any existing `status-right` content by prepending it:
 
 ```
 # claude-monitor begin
 set -g status-right-length 200
-set -g status-right '<your existing status-right> #(  claude-monitor status)'
-bind-key F5 run-shell 'claude-monitor refresh'
+set -g status-right "<your existing status-right> #(  claude-monitor status)"
+bind-key F5 run-shell "claude-monitor refresh"
 # claude-monitor end
 ```
+
+The block uses double quotes, so a preserved value has its own double quotes and backslashes escaped on the way in.
 
 To add this manually, append it to your tmux config (adjusting `status-right` to fit your existing setup), then reload:
 
@@ -208,8 +233,10 @@ On macOS, `init` installs a launchd agent at `~/Library/LaunchAgents/com.github.
 
 ```sh
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.github.tedwardd.claude-monitor.plist
-launchctl kickstart -k gui/$(id -u)/com.github.tedwardd.claude-monitor
+launchctl kickstart gui/$(id -u)/com.github.tedwardd.claude-monitor
 ```
+
+The agent records the binary's stable `$PATH` location rather than the path it was launched from, so a Homebrew upgrade does not leave it pointing into an old versioned directory.
 
 The agent sets `RunAtLoad` so it starts on login, and `KeepAlive` with `SuccessfulExit` false so launchd restarts it if it crashes but leaves it alone after a clean exit. `ThrottleInterval` holds restarts to one every 30 seconds. To remove it:
 
@@ -228,7 +255,7 @@ StartLimitIntervalSec=300
 StartLimitBurst=5
 
 [Service]
-ExecStart=/path/to/claude-monitor daemon
+ExecStart=claude-monitor daemon
 Restart=on-failure
 RestartSec=30
 
@@ -236,7 +263,9 @@ RestartSec=30
 WantedBy=default.target
 ```
 
-To install it manually (replace the `ExecStart` path with the output of `which claude-monitor`):
+systemd resolves a bare command name against a fixed list of system directories such as `/usr/bin`, not against your `$PATH`. That works for the AUR packages, which install to `/usr/bin`. If you installed the binary somewhere else, `~/.local/bin` for instance, change `ExecStart` to the absolute path from `which claude-monitor`.
+
+To install it manually:
 
 ```sh
 mkdir -p ~/.config/systemd/user
