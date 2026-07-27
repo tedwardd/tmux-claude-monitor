@@ -98,7 +98,7 @@ On macOS the daemon reads your token from the login keychain. Depending on how t
 | `claude-monitor init` | One-time setup |
 | `claude-monitor status` | Print the current status string (called by tmux) |
 | `claude-monitor refresh` | Signal the daemon for an immediate fetch |
-| `claude-monitor lsrules` | Print a Little Snitch rule group for this install (see [Network access](#network-access)) |
+| `claude-monitor lsrules` | Explain the Little Snitch rule group; `--subscribe` to add it (see [Little Snitch](#little-snitch)) |
 | `claude-monitor daemon` | Run the background poller (managed by systemd or launchd) |
 
 `init` takes two flags:
@@ -124,13 +124,15 @@ The daemon opens exactly one connection: `GET https://api.anthropic.com/api/oaut
 
 ### Little Snitch
 
-Each release publishes a [Little Snitch](https://obdev.at/products/littlesnitch/) rule group covering every connection the daemon makes. Subscribe to it once:
+Each release publishes a [Little Snitch](https://obdev.at/products/littlesnitch/) rule group covering every connection the daemon makes.
+
+`claude-monitor lsrules` explains what the group contains and changes nothing. To act on it:
 
 ```sh
 claude-monitor lsrules --subscribe
 ```
 
-That hands Little Snitch this URL, which always resolves to the newest release:
+Little Snitch then shows its own confirmation, so the subscription is added only if you accept it there. The URL always resolves to the newest release:
 
 ```
 https://github.com/tedwardd/tmux-claude-monitor/releases/latest/download/claude-monitor.lsrules
@@ -140,10 +142,10 @@ Subscribing rather than importing matters. Little Snitch matches on the full exe
 
 The published group names the four concrete install locations, the fixed `bin` symlink and the versioned `Caskroom` directory under both the Apple Silicon and Intel Homebrew prefixes. It grants nothing to any other program. Each rule carries the reason for the connection in its `notes` field, so the policy explains itself to someone who is not going to read the source.
 
-It is allow-only on purpose: a subscription that silently denied traffic would be a poor surprise. To also forbid everything else, generate a local group for your own install:
+It is allow-only on purpose: a subscription that silently denied traffic would be a poor surprise. To also forbid everything else, print a local group for your own install:
 
 ```sh
-claude-monitor lsrules --strict > claude-monitor.lsrules
+claude-monitor lsrules --print --strict
 ```
 
 That names the paths of the binary you ran it from and adds deny rules for anything else it might attempt, turning the allowlist into a boundary rather than a description. Without `--strict` those deny rules are emitted disabled. Note that Little Snitch 6 has no way to import a `.lsrules` file from disk, so a local group has to be entered through its interface, using this output as the specification. Re-run it after an upgrade, since the versioned path will have changed.

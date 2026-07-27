@@ -46,7 +46,6 @@ Commands:
   daemon   Start background poller (writes cache every 5 min)
   status   Print tmux-formatted usage string (reads cache)
   refresh  Signal daemon for immediate fetch
-  lsrules  Little Snitch rules: --subscribe to follow releases, or print a
-           group for this install (--strict to also deny everything else)
+  lsrules  Explain the Little Snitch rule group; --subscribe to add it
 `)
 }

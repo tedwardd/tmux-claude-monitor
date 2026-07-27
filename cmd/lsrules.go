@@ -150,52 +150,88 @@ func subscribeURI() string {
 	return "x-littlesnitch:subscribe-rules?url=" + url.QueryEscape(subscriptionURL)
 }
 
-func runLSRules() {
-	var (
-		strict      bool
-		subscribe   bool
-		relVersion  string
-		unknownArgs []string
-	)
-	args := os.Args[2:]
+// lsRulesExplanation is what a bare `lsrules` prints. Adding a firewall
+// subscription is not something to do as a side effect of someone looking at a
+// command, so nothing happens until they ask for it.
+const lsRulesExplanation = `Little Snitch integration for claude-monitor.
+
+Nothing on your system changes unless you pass --subscribe.
+
+With --subscribe, Little Snitch is asked to add a rule group subscription for:
+
+  %s
+
+Little Snitch shows its own confirmation before anything is added, and you can
+read the rules first with:
+
+  curl -fsSL %s
+
+What the group contains, for both the /opt/homebrew and /usr/local prefixes:
+
+  allow  <prefix>/bin/claude-monitor                                -> %s:%s
+  allow  <prefix>/Caskroom/claude-monitor/<version>/claude-monitor  -> %s:%s
+
+That is the whole list. It lets this program reach one host, the usage API the
+daemon polls, and grants nothing to any other program. There are no deny rules.
+
+A subscription rather than a fixed rule because Little Snitch matches the full
+executable path and Homebrew installs into a directory named after the version,
+so a fixed rule stops matching as soon as you upgrade. A subscription refreshes
+itself and picks up each release.
+
+Options:
+  --subscribe, --add    ask Little Snitch to add the subscription
+  --print               print a rule group for this install instead of subscribing
+  --print --strict      ... and include deny rules for everything else
+`
+
+type lsRulesArgs struct {
+	strict     bool
+	subscribe  bool
+	printGroup bool
+	release    string
+	unknown    []string
+}
+
+func parseLSRulesArgs(args []string) lsRulesArgs {
+	var a lsRulesArgs
 	for i := 0; i < len(args); i++ {
 		switch {
 		case args[i] == "--strict":
-			strict = true
-		case args[i] == "--subscribe":
-			subscribe = true
+			a.strict = true
+		case args[i] == "--subscribe", args[i] == "--add":
+			a.subscribe = true
+		case args[i] == "--print":
+			a.printGroup = true
 		case args[i] == "--release" && i+1 < len(args):
 			i++
-			relVersion = args[i]
+			a.release = args[i]
 		case strings.HasPrefix(args[i], "--release="):
-			relVersion = strings.TrimPrefix(args[i], "--release=")
+			a.release = strings.TrimPrefix(args[i], "--release=")
 		default:
-			unknownArgs = append(unknownArgs, args[i])
+			a.unknown = append(a.unknown, args[i])
 		}
 	}
-	if len(unknownArgs) > 0 {
-		fmt.Fprintf(os.Stderr, "lsrules: unknown argument %q\n", unknownArgs[0])
+	return a
+}
+
+func runLSRules() {
+	a := parseLSRulesArgs(os.Args[2:])
+	if len(a.unknown) > 0 {
+		fmt.Fprintf(os.Stderr, "lsrules: unknown argument %q\n", a.unknown[0])
 		os.Exit(1)
 	}
+	strict, subscribe, printGroup, relVersion := a.strict, a.subscribe, a.printGroup, a.release
 
-	if subscribe {
-		uri := subscribeURI()
-		if out, err := exec.Command("open", uri).CombinedOutput(); err != nil {
-			fmt.Fprintf(os.Stderr, "lsrules: open %s: %v: %s\n", uri, err, strings.TrimSpace(string(out)))
-			fmt.Fprintf(os.Stderr, "Subscribe manually in Little Snitch with this URL:\n  %s\n", subscriptionURL)
-			os.Exit(1)
-		}
-		fmt.Printf("Asked Little Snitch to subscribe to:\n  %s\n", subscriptionURL)
-		return
-	}
-
-	var g lsGroup
-	if relVersion != "" {
+	switch {
+	case subscribe:
+		runLSSubscribe()
+	case relVersion != "":
 		// The published group is deliberately allow-only. A subscription that
 		// silently denied traffic would be a poor surprise, so enforcement stays a
 		// local, deliberate choice via --strict.
-		g = buildLSGroup(releaseDescription(relVersion), releasePaths(relVersion), denyOmit)
-	} else {
+		printLSGroup(buildLSGroup(releaseDescription(relVersion), releasePaths(relVersion), denyOmit))
+	case printGroup || strict:
 		paths, err := executablePaths()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "lsrules: locate executable: %v\n", err)
@@ -205,9 +241,28 @@ func runLSRules() {
 		if strict {
 			deny = denyEnabled
 		}
-		g = buildLSGroup(localDescription, paths, deny)
+		printLSGroup(buildLSGroup(localDescription, paths, deny))
+	default:
+		fmt.Printf(lsRulesExplanation,
+			subscriptionURL, subscriptionURL,
+			usageHost, usagePort, usageHost, usagePort)
 	}
+}
 
+func runLSSubscribe() {
+	uri := subscribeURI()
+	out, err := exec.Command("open", uri).CombinedOutput()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "lsrules: open %s: %v: %s\n", uri, err, strings.TrimSpace(string(out)))
+		fmt.Fprintf(os.Stderr, "Add the subscription in Little Snitch by hand instead:\n  %s\n", subscriptionURL)
+		os.Exit(1)
+	}
+	fmt.Printf("Handed Little Snitch this subscription URL:\n  %s\n\n"+
+		"Confirm it in the window Little Snitch opens. Nothing is added until you do.\n",
+		subscriptionURL)
+}
+
+func printLSGroup(g lsGroup) {
 	data, err := json.MarshalIndent(g, "", "  ")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "lsrules: %v\n", err)

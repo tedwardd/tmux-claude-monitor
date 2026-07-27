@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/url"
 	"strings"
 	"testing"
@@ -237,5 +238,68 @@ func TestSubscribeURIIsWellFormed(t *testing.T) {
 	}
 	if decoded != subscriptionURL {
 		t.Errorf("round trip gave %q, want %q", decoded, subscriptionURL)
+	}
+}
+
+// A bare `lsrules` must neither dump the rule group nor touch the firewall.
+func TestBareLSRulesNeitherPrintsNorSubscribes(t *testing.T) {
+	a := parseLSRulesArgs(nil)
+	if a.subscribe {
+		t.Error("bare invocation would subscribe")
+	}
+	if a.printGroup || a.strict || a.release != "" {
+		t.Errorf("bare invocation would print a group: %+v", a)
+	}
+	if len(a.unknown) != 0 {
+		t.Errorf("unexpected unknown args: %v", a.unknown)
+	}
+}
+
+// The explanation stands in for the rule group on a bare run, so it has to say
+// what would happen and must not be mistaken for machine output.
+func TestLSRulesExplanationExplains(t *testing.T) {
+	text := fmt.Sprintf(lsRulesExplanation,
+		subscriptionURL, subscriptionURL, usageHost, usagePort, usageHost, usagePort)
+
+	if json.Valid([]byte(text)) {
+		t.Error("explanation parses as JSON; the default must not emit a rule group")
+	}
+	for _, want := range []string{
+		"Nothing on your system changes unless you pass --subscribe",
+		subscriptionURL,
+		usageHost + ":" + usagePort,
+		"grants nothing to any other program",
+		"--subscribe, --add",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("explanation missing %q", want)
+		}
+	}
+}
+
+func TestLSRulesFlagParsing(t *testing.T) {
+	for _, tc := range []struct {
+		args []string
+		want lsRulesArgs
+	}{
+		{[]string{"--subscribe"}, lsRulesArgs{subscribe: true}},
+		{[]string{"--add"}, lsRulesArgs{subscribe: true}},
+		{[]string{"--print"}, lsRulesArgs{printGroup: true}},
+		{[]string{"--print", "--strict"}, lsRulesArgs{printGroup: true, strict: true}},
+		{[]string{"--release", "v1.2.3"}, lsRulesArgs{release: "v1.2.3"}},
+		{[]string{"--release=v1.2.3"}, lsRulesArgs{release: "v1.2.3"}},
+	} {
+		got := parseLSRulesArgs(tc.args)
+		if got.subscribe != tc.want.subscribe || got.printGroup != tc.want.printGroup ||
+			got.strict != tc.want.strict || got.release != tc.want.release {
+			t.Errorf("parse %v = %+v, want %+v", tc.args, got, tc.want)
+		}
+		if len(got.unknown) != 0 {
+			t.Errorf("parse %v reported unknown args %v", tc.args, got.unknown)
+		}
+	}
+
+	if got := parseLSRulesArgs([]string{"--bogus"}); len(got.unknown) != 1 {
+		t.Errorf("--bogus should be reported as unknown, got %+v", got)
 	}
 }
