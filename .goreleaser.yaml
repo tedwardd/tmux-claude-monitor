@@ -7,6 +7,7 @@ builds:
       - CGO_ENABLED=0
     goos:
       - linux
+      - darwin
     goarch:
       - amd64
       - arm64
@@ -14,8 +15,36 @@ builds:
       - -s -w
 
 archives:
-  - format: tar.gz
+  - formats:
+      - tar.gz
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+homebrew_casks:
+  - name: claude-monitor
+    binaries:
+      - claude-monitor
+    repository:
+      owner: tedwardd
+      name: homebrew-tap
+      branch: main
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    homepage: https://github.com/tedwardd/tmux-claude-monitor
+    description: tmux status bar daemon displaying Claude Pro quota usage in real time
+    url:
+      verified: github.com/tedwardd/tmux-claude-monitor/
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/claude-monitor"]
+          end
+    caveats: |
+      Run the one-time setup to install the launchd agent and patch your tmux config:
+
+        claude-monitor init
+
+      The daemon reads your Claude Code OAuth token from the login keychain.
+      macOS prompts for access the first time it runs. Choose "Always Allow".
 
 checksum:
   name_template: checksums.txt

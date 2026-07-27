@@ -37,3 +37,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GH_PAT }}
           GORELEASER_CURRENT_TAG: ${{ steps.tag.outputs.new_tag }}
+          # Needs write access to tedwardd/homebrew-tap. Falls back to GH_PAT so a
+          # dedicated, narrower token can be swapped in later without a code change.
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN || secrets.GH_PAT }}
