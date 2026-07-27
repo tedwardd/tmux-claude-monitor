@@ -10,8 +10,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/godbus/dbus/v5"
-
 	"claude-monitor/internal/api"
 	"claude-monitor/internal/cache"
 	"claude-monitor/internal/config"
@@ -32,7 +30,7 @@ func runDaemon() {
 	defer os.Remove(pidPath)
 
 	credPath := expandHome(cfg.CredentialsPath)
-	creds, err := api.ReadCredentials(credPath)
+	creds, err := api.LoadCredentials(credPath)
 	if err != nil {
 		writeErrorCache(cfg, fmt.Sprintf("read credentials: %v", err))
 		fmt.Fprintf(os.Stderr, "daemon: %v\n", err)
@@ -127,48 +125,6 @@ func expandHome(p string) string {
 		return filepath.Join(home, p[2:])
 	}
 	return p
-}
-
-// startResumeWatcher tries to use the D-Bus login1 PrepareForSleep signal for
-// immediate wake detection. Falls back to clock-drift polling if unavailable.
-func startResumeWatcher(resume chan<- struct{}) {
-	if tryDBusResumeWatcher(resume) {
-		return
-	}
-	go watchSleep(resume)
-}
-
-func tryDBusResumeWatcher(resume chan<- struct{}) bool {
-	conn, err := dbus.ConnectSystemBus()
-	if err != nil {
-		return false
-	}
-	err = conn.AddMatchSignal(
-		dbus.WithMatchInterface("org.freedesktop.login1.Manager"),
-		dbus.WithMatchMember("PrepareForSleep"),
-	)
-	if err != nil {
-		conn.Close()
-		return false
-	}
-	signals := make(chan *dbus.Signal, 1)
-	conn.Signal(signals)
-	go func() {
-		defer conn.Close()
-		for sig := range signals {
-			if len(sig.Body) == 0 {
-				continue
-			}
-			sleeping, ok := sig.Body[0].(bool)
-			if ok && !sleeping {
-				select {
-				case resume <- struct{}{}:
-				default:
-				}
-			}
-		}
-	}()
-	return true
 }
 
 // watchSleep is the fallback resume detector used when D-Bus is unavailable.

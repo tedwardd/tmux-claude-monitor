@@ -7,13 +7,22 @@ ARCHIVE    := $(WORKDIR)/$(PKGNAME)-$(VERSION).tar.gz
 PKG        := $(WORKDIR)/$(PKGNAME)-$(VERSION)-1-x86_64.pkg.tar.zst
 TMUX_CONF  := $(HOME)/.config/tmux/tmux.conf
 
-.PHONY: build test install pkg pkg-install pkg-uninstall clean
+# GNU coreutils and the BSD tools on macOS disagree on both of these.
+SHA256      := $(shell command -v sha256sum >/dev/null 2>&1 && echo sha256sum || echo 'shasum -a 256')
+SED_INPLACE := $(shell sed --version >/dev/null 2>&1 && echo 'sed -i' || echo "sed -i ''")
+
+.PHONY: build test install snapshot pkg pkg-install pkg-uninstall clean
 
 build:
 	go build -o $(BINARY) .
 
 test:
 	go test ./...
+
+# Build every release target locally and render the Homebrew cask into dist/
+snapshot:
+	HOMEBREW_TAP_TOKEN=unused go run github.com/goreleaser/goreleaser/v2@latest \
+		release --snapshot --clean --skip=publish
 
 install: build
 	mkdir -p $(INSTALL_DIR)
@@ -26,14 +35,14 @@ pkg:
 	@mkdir -p $(WORKDIR)
 	@git archive --format=tar.gz --prefix=$(PKGNAME)-$(VERSION)/ HEAD \
 		> $(ARCHIVE)
-	@SHA=$$(sha256sum $(ARCHIVE) | awk '{print $$1}'); \
+	@SHA=$$($(SHA256) $(ARCHIVE) | awk '{print $$1}'); \
 	echo "==> sha256: $$SHA"; \
 	echo "==> Patching PKGBUILD"; \
 	cp packaging/aur/$(PKGNAME)/PKGBUILD $(WORKDIR)/; \
 	cp packaging/aur/$(PKGNAME)/claude-monitor.install $(WORKDIR)/; \
-	sed -i "s/^pkgver=.*/pkgver=$(VERSION)/" $(WORKDIR)/PKGBUILD; \
-	sed -i "s|source=.*|source=(\"$(PKGNAME)-$(VERSION).tar.gz\")|" $(WORKDIR)/PKGBUILD; \
-	sed -i "s/^sha256sums=.*/sha256sums=('$$SHA')/" $(WORKDIR)/PKGBUILD
+	$(SED_INPLACE) "s/^pkgver=.*/pkgver=$(VERSION)/" $(WORKDIR)/PKGBUILD; \
+	$(SED_INPLACE) "s|source=.*|source=(\"$(PKGNAME)-$(VERSION).tar.gz\")|" $(WORKDIR)/PKGBUILD; \
+	$(SED_INPLACE) "s/^sha256sums=.*/sha256sums=('$$SHA')/" $(WORKDIR)/PKGBUILD
 	@echo "==> Running makepkg"
 	@cd $(WORKDIR) && makepkg --noconfirm
 	@echo ""
@@ -51,7 +60,7 @@ pkg-uninstall:
 	-systemctl --user disable claude-monitor
 	-rm -f $(HOME)/.config/systemd/user/claude-monitor.service
 	-systemctl --user daemon-reload
-	-sed -i '/# claude-monitor begin/,/# claude-monitor end/d' $(TMUX_CONF)
+	-$(SED_INPLACE) '/# claude-monitor begin/,/# claude-monitor end/d' $(TMUX_CONF)
 	-tmux source $(TMUX_CONF) 2>/dev/null
 	-rm -rf $(HOME)/.config/claude-monitor
 	-rm -rf $(HOME)/.cache/claude-monitor

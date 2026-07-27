@@ -41,6 +41,10 @@ func ReadCredentials(path string) (Credentials, error) {
 	if err != nil {
 		return Credentials{}, fmt.Errorf("read credentials: %w", err)
 	}
+	return parseCredentials(data)
+}
+
+func parseCredentials(data []byte) (Credentials, error) {
 	var cf credentialsFile
 	if err := json.Unmarshal(data, &cf); err != nil {
 		return Credentials{}, fmt.Errorf("parse credentials: %w", err)
