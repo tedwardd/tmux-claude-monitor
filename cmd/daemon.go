@@ -46,29 +46,26 @@ func runDaemon() {
 	resume := make(chan struct{}, 1)
 	startResumeWatcher(resume)
 
-	consecutiveFails := 0
-	var ticker *time.Ticker
+	if cfg.PollIntervalSeconds <= 0 {
+		cfg.PollIntervalSeconds = 300
+	}
+	normal := time.Duration(cfg.PollIntervalSeconds) * time.Second
+	cachePath := cache.Path(cfg.CachePath)
 
-	fetch := func() {
+	// consecutiveFails is touched only here, and fetch only ever runs on the
+	// poller's fetch goroutine, so it needs no synchronisation.
+	consecutiveFails := 0
+
+	fetch := func() time.Duration {
 		usage, err := api.FetchUsage(creds.AccessToken)
-		p := cache.Path(cfg.CachePath)
 		if err != nil {
-			cache.WriteToPath(p, cache.Entry{FetchedAt: time.Now().UTC(), Error: err.Error()})
-			backoff := time.Duration(30*(1<<consecutiveFails)) * time.Second
-			if backoff > 300*time.Second {
-				backoff = 300 * time.Second
-			}
+			cache.WriteToPath(cachePath, cache.Entry{FetchedAt: time.Now().UTC(), Error: err.Error()})
+			backoff := backoffFor(consecutiveFails)
 			consecutiveFails++
-			if ticker != nil {
-				ticker.Reset(backoff)
-			}
-			return
+			return backoff
 		}
 		consecutiveFails = 0
-		if ticker != nil {
-			ticker.Reset(time.Duration(cfg.PollIntervalSeconds) * time.Second)
-		}
-		cache.WriteToPath(p, cache.Entry{
+		cache.WriteToPath(cachePath, cache.Entry{
 			FetchedAt:          time.Now().UTC(),
 			SessionUtilization: usage.SessionUtilization,
 			SessionResetsAt:    usage.SessionResetsAt,
@@ -79,26 +76,103 @@ func runDaemon() {
 			ExtraLimitDollars:  usage.ExtraLimitDollars,
 			ExtraUtilization:   usage.ExtraUtilization,
 		})
+		return normal
 	}
 
-	fetch() // immediate fetch on start
+	poller{
+		fetch:       fetch,
+		interval:    normal,
+		resumeGrace: resumeGrace,
+		usr1:        usr1,
+		quit:        quit,
+		resume:      resume,
+	}.run()
+}
 
-	if cfg.PollIntervalSeconds <= 0 {
-		cfg.PollIntervalSeconds = 300
+const (
+	minBackoff  = 30 * time.Second
+	maxBackoff  = 300 * time.Second
+	resumeGrace = 5 * time.Second
+
+	// Shifting past this would overflow the duration and hand Ticker.Reset a
+	// negative interval, which panics. Reached after roughly five hours offline.
+	maxFailShift = 8
+)
+
+// backoffFor returns how long to wait after consecutiveFails failed fetches.
+func backoffFor(consecutiveFails int) time.Duration {
+	if consecutiveFails < 0 {
+		return minBackoff
 	}
-	ticker = time.NewTicker(time.Duration(cfg.PollIntervalSeconds) * time.Second)
+	if consecutiveFails > maxFailShift {
+		return maxBackoff
+	}
+	d := minBackoff << consecutiveFails
+	if d > maxBackoff {
+		return maxBackoff
+	}
+	return d
+}
+
+// poller owns the timing loop. Fetches are handed to a separate goroutine so
+// that a request in flight can never delay a signal: the daemon used to run
+// fetch inline, leaving SIGTERM unread in its channel until the HTTP timeout
+// expired, which stalled anything waiting on the process to exit.
+type poller struct {
+	// fetch performs one fetch and returns the interval to wait before the next.
+	fetch       func() time.Duration
+	interval    time.Duration
+	resumeGrace time.Duration
+	usr1        <-chan os.Signal
+	quit        <-chan os.Signal
+	resume      <-chan struct{}
+}
+
+func (p poller) run() {
+	trigger := make(chan struct{}, 1)
+	next := make(chan time.Duration, 1)
+
+	go func() {
+		for range trigger {
+			select {
+			case next <- p.fetch():
+			default:
+			}
+		}
+	}()
+
+	// A full buffer means a fetch is already queued or running, so asking again
+	// coalesces instead of stacking up.
+	request := func() {
+		select {
+		case trigger <- struct{}{}:
+		default:
+		}
+	}
+
+	request()
+
+	ticker := time.NewTicker(p.interval)
 	defer ticker.Stop()
+
+	// Nil until a wake is seen; receiving on a nil channel blocks, which keeps
+	// the case inert without a second select.
+	var wake <-chan time.Time
 
 	for {
 		select {
 		case <-ticker.C:
-			fetch()
-		case <-usr1:
-			fetch()
-		case <-resume:
-			time.Sleep(5 * time.Second) // let network reconnect after wake
-			fetch()
-		case <-quit:
+			request()
+		case <-p.usr1:
+			request()
+		case <-p.resume:
+			wake = time.After(p.resumeGrace)
+		case <-wake:
+			wake = nil
+			request()
+		case d := <-next:
+			ticker.Reset(d)
+		case <-p.quit:
 			return
 		}
 	}
