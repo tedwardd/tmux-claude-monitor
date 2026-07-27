@@ -46,6 +46,8 @@ Apple Silicon and Intel are both covered. To upgrade later:
 brew upgrade --cask claude-monitor
 ```
 
+An upgrade replaces the binary but the already-running daemon keeps the old one loaded, so the cask restarts the launchd agent for you once `init` has installed it. You do not need to re-run `init` after upgrading.
+
 ### Arch Linux (AUR)
 
 ```sh
@@ -207,17 +209,19 @@ All paths support `~/` expansion. The config is loaded by both the daemon and th
 
 ### Step 3 — tmux config
 
-`init` patches an existing `~/.tmux.conf` or `~/.config/tmux/tmux.conf`, falling back to the latter. It copies the file to `<path>.claude-monitor.bak` first, then appends this block, preserving any existing `status-right` content by prepending it:
+`init` patches an existing `~/.tmux.conf` or `~/.config/tmux/tmux.conf`, falling back to the latter. It copies the file to `<path>.claude-monitor.bak` first, then appends this block:
 
 ```
 # claude-monitor begin
 set -g status-right-length 200
-set -g status-right "<your existing status-right> #(  claude-monitor status)"
+set -ga status-right " #(  claude-monitor status)"
 bind-key F5 run-shell "claude-monitor refresh"
 # claude-monitor end
 ```
 
-The block uses double quotes, so a preserved value has its own double quotes and backslashes escaped on the way in.
+Your own `set -g status-right` line is left exactly as it is. The block uses `-ga` to append to whatever you already set, so nothing of yours is rewritten or escaped. If your config sets no `status-right` at all, the block adds one of its own above the append.
+
+Re-running `init` replaces the block rather than adding a second one, so `--force` is safe. Your non-append assignment resets the option ahead of the append each time the file is sourced, which is what stops the segment accumulating when you reload.
 
 To add this manually, append it to your tmux config (adjusting `status-right` to fit your existing setup), then reload:
 
