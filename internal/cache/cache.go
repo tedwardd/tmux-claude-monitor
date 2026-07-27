@@ -36,14 +36,35 @@ func Path(cachePath string) string {
 }
 
 func WriteToPath(p string, e Entry) error {
-	if err := os.MkdirAll(filepath.Dir(p), 0700); err != nil {
+	dir := filepath.Dir(p)
+	if err := os.MkdirAll(dir, 0700); err != nil {
 		return err
 	}
 	data, err := json.Marshal(e)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(p, data, 0600)
+
+	// Write then rename, so a daemon killed mid-write leaves the previous cache
+	// intact rather than a truncated file for the status command to choke on.
+	tmp, err := os.CreateTemp(dir, ".status-*.json")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name())
+
+	if err := tmp.Chmod(0600); err != nil {
+		tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), p)
 }
 
 func ReadFromPath(p string) (Entry, error) {

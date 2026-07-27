@@ -88,3 +88,60 @@ func TestWriteCreatesParentDir(t *testing.T) {
 		t.Errorf("file not created: %v", err)
 	}
 }
+
+// The daemon can now exit while a write is in flight, so a write must either
+// land whole or leave the previous cache untouched.
+func TestWriteToPathReplacesAtomically(t *testing.T) {
+	p := tempCachePath(t)
+	first := cache.Entry{FetchedAt: time.Now().UTC(), SessionUtilization: 11}
+	if err := cache.WriteToPath(p, first); err != nil {
+		t.Fatalf("first write: %v", err)
+	}
+
+	second := cache.Entry{FetchedAt: time.Now().UTC(), SessionUtilization: 22}
+	if err := cache.WriteToPath(p, second); err != nil {
+		t.Fatalf("second write: %v", err)
+	}
+
+	got, err := cache.ReadFromPath(p)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if got.SessionUtilization != 22 {
+		t.Errorf("SessionUtilization = %v, want 22", got.SessionUtilization)
+	}
+}
+
+func TestWriteToPathLeavesNoTempFiles(t *testing.T) {
+	p := tempCachePath(t)
+	for i := 0; i < 5; i++ {
+		if err := cache.WriteToPath(p, cache.Entry{FetchedAt: time.Now().UTC()}); err != nil {
+			t.Fatalf("write %d: %v", i, err)
+		}
+	}
+
+	entries, err := os.ReadDir(filepath.Dir(p))
+	if err != nil {
+		t.Fatalf("readdir: %v", err)
+	}
+	for _, e := range entries {
+		if e.Name() != filepath.Base(p) {
+			t.Errorf("stray file left behind: %s", e.Name())
+		}
+	}
+}
+
+func TestWriteToPathKeepsOwnerOnlyPermissions(t *testing.T) {
+	p := tempCachePath(t)
+	if err := cache.WriteToPath(p, cache.Entry{FetchedAt: time.Now().UTC()}); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	fi, err := os.Stat(p)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	// CreateTemp makes files 0600; the rename must not loosen that.
+	if perm := fi.Mode().Perm(); perm != 0600 {
+		t.Errorf("permissions = %o, want 600", perm)
+	}
+}
