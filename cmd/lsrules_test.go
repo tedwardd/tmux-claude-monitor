@@ -52,7 +52,7 @@ func TestLSGroupCoversEveryPath(t *testing.T) {
 	for _, p := range paths {
 		var allowed bool
 		for _, r := range g.Rules {
-			if r.Action == "allow" && r.Process == p && r.RemoteHosts == usageHost && r.Ports == usagePort {
+			if r.Action == "allow" && r.Process == p && r.RemoteDomains == usageHost && r.Ports == usagePort {
 				allowed = true
 			}
 		}
@@ -68,8 +68,8 @@ func TestLSGroupOnlyAllowsTheUsageEndpoint(t *testing.T) {
 		if r.Action != "allow" {
 			continue
 		}
-		if r.RemoteHosts != usageHost {
-			t.Errorf("allow rule targets %q, want only %q", r.RemoteHosts, usageHost)
+		if r.RemoteDomains != usageHost {
+			t.Errorf("allow rule targets %q, want only %q", r.RemoteDomains, usageHost)
 		}
 		if r.Ports != usagePort || r.Protocol != "tcp" || r.Direction != "outgoing" {
 			t.Errorf("unexpected allow rule scope: %+v", r)
@@ -139,8 +139,8 @@ func TestLSGroupOmitsUnusedFields(t *testing.T) {
 			}
 		}
 		if m["action"] == "deny" {
-			if _, has := m["remote-hosts"]; has {
-				t.Error("deny rule should not set remote-hosts alongside remote")
+			if _, has := m["remote-domains"]; has {
+				t.Error("deny rule should not set remote-domains alongside remote")
 			}
 		}
 	}
@@ -176,13 +176,13 @@ func denyFor(strict bool) denyPolicy {
 // The published group must be usable on any Mac, so it names deterministic
 // install paths and never falls back to widening the process.
 func TestReleaseGroupCoversBothHomebrewPrefixes(t *testing.T) {
-	g := buildLSGroup(releaseDescription("v1.2.3"), releasePaths("v1.2.3"), denyOmit)
+	g := buildLSGroup(releaseDescription("v1.2.3"), releasePaths(), denyOmit)
 
 	want := []string{
 		"/opt/homebrew/bin/claude-monitor",
-		"/opt/homebrew/Caskroom/claude-monitor/1.2.3/claude-monitor",
+		"/opt/homebrew/Caskroom/claude-monitor/*/claude-monitor",
 		"/usr/local/bin/claude-monitor",
-		"/usr/local/Caskroom/claude-monitor/1.2.3/claude-monitor",
+		"/usr/local/Caskroom/claude-monitor/*/claude-monitor",
 	}
 	got := map[string]bool{}
 	for _, r := range g.Rules {
@@ -201,13 +201,16 @@ func TestReleaseGroupCoversBothHomebrewPrefixes(t *testing.T) {
 	}
 }
 
-// A leading v must not leak into a Caskroom path; Homebrew directories are bare
-// version numbers.
-func TestReleasePathsStripLeadingV(t *testing.T) {
-	for _, v := range []string{"v9.9.9", "9.9.9"} {
-		for _, p := range releasePaths(v) {
-			if strings.Contains(p, "/v9.9.9/") {
-				t.Errorf("version %q produced path with a v prefix: %s", v, p)
+// The version directory must stay wildcarded, since a concrete version would
+// stop matching on the next upgrade, which is the failure this replaced.
+func TestReleasePathsWildcardTheVersion(t *testing.T) {
+	for _, p := range releasePaths() {
+		if strings.Contains(p, "Caskroom") && !strings.Contains(p, "/*/") {
+			t.Errorf("Caskroom path is not wildcarded: %s", p)
+		}
+		for _, digitish := range []string{"0.", "1.", "2."} {
+			if strings.Contains(p, digitish) {
+				t.Errorf("path embeds a version: %s", p)
 			}
 		}
 	}
@@ -215,7 +218,7 @@ func TestReleasePathsStripLeadingV(t *testing.T) {
 
 // A subscription that silently denied traffic would be a bad surprise.
 func TestReleaseGroupHasNoDenyRules(t *testing.T) {
-	for _, r := range buildLSGroup(releaseDescription("1.0.0"), releasePaths("1.0.0"), denyOmit).Rules {
+	for _, r := range buildLSGroup(releaseDescription("1.0.0"), releasePaths(), denyOmit).Rules {
 		if r.Action != "allow" {
 			t.Errorf("published group contains a %q rule", r.Action)
 		}

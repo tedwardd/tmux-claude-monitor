@@ -138,9 +138,11 @@ Little Snitch then shows its own confirmation, so the subscription is added only
 https://github.com/tedwardd/tmux-claude-monitor/releases/latest/download/claude-monitor.lsrules
 ```
 
-Subscribing rather than importing matters. Little Snitch matches on the full executable path and supports no wildcards, and Homebrew installs to a directory named after the version, so a fixed rule stops matching the moment you upgrade. Until the new path is approved every fetch waits for the 30 second timeout and the status bar falls back to `??`. A subscription refreshes itself, so each release's paths arrive without you doing anything.
+The group covers four install locations, the fixed `bin` symlink and the `Caskroom` directory under both the Apple Silicon and Intel Homebrew prefixes. The version component of the Caskroom path is wildcarded, so the rules keep matching after an upgrade instead of needing re-approval. It grants nothing to any other program, and each rule carries the reason for the connection in its `notes` field, so the policy explains itself to someone who is not going to read the source.
 
-The published group names the four concrete install locations, the fixed `bin` symlink and the versioned `Caskroom` directory under both the Apple Silicon and Intel Homebrew prefixes. It grants nothing to any other program. Each rule carries the reason for the connection in its `notes` field, so the policy explains itself to someone who is not going to read the source.
+Subscribing rather than importing means a later correction to the group reaches you as well.
+
+If you do see a prompt for `claude-monitor`, choose **Forever** and **"Only domain anthropic.com and TCP port 443"**. Picking `Once` means it returns on the next poll, and a `Deny` at any scope creates a permanent rule that outranks this group, after which every fetch waits out the 30 second timeout and the status bar shows `??` with nothing indicating the firewall. If that happens, delete the `deny` rule under `claude-monitor` in Little Snitch.
 
 It is allow-only on purpose: a subscription that silently denied traffic would be a poor surprise. To also forbid everything else, print a local group for your own install:
 
