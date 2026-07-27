@@ -3,18 +3,22 @@
 package cmd
 
 import (
+	"context"
 	"encoding/xml"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 const (
 	serviceDescription = "launchd user agent"
 	launchdLabel       = "com.github.tedwardd.claude-monitor"
 	launchdLogPath     = "~/Library/Logs/claude-monitor.log"
+
+	launchctlTimeout = 15 * time.Second
 )
 
 const serviceHints = `  launchctl print gui/$(id -u)/com.github.tedwardd.claude-monitor
@@ -95,24 +99,40 @@ func installService() error {
 	target := domain + "/" + launchdLabel
 
 	// Drop any previously loaded copy so bootstrap doesn't fail on the label.
-	exec.Command("launchctl", "bootout", target).Run()
-	exec.Command("launchctl", "enable", target).Run()
+	launchctl("bootout", target)
+	launchctl("enable", target)
 
-	if out, err := exec.Command("launchctl", "bootstrap", domain, plistPath).CombinedOutput(); err != nil {
+	if out, err := launchctl("bootstrap", domain, plistPath); err != nil {
 		// bootstrap is unavailable before macOS 10.11.
-		out2, err2 := exec.Command("launchctl", "load", "-w", plistPath).CombinedOutput()
+		out2, err2 := launchctl("load", "-w", plistPath)
 		if err2 != nil {
 			return fmt.Errorf("launchctl bootstrap: %v: %s (load fallback: %v: %s)",
 				err, strings.TrimSpace(string(out)), err2, strings.TrimSpace(string(out2)))
 		}
 	}
 
-	if out, err := exec.Command("launchctl", "kickstart", "-k", target).CombinedOutput(); err != nil {
-		return fmt.Errorf("launchctl kickstart: %v: %s", err, strings.TrimSpace(string(out)))
+	// RunAtLoad already started it; kickstart only covers a job left disabled, so a
+	// failure here is not worth aborting a setup that otherwise succeeded.
+	if out, err := launchctl("kickstart", target); err != nil {
+		fmt.Fprintf(os.Stderr, "  WARNING: launchctl kickstart: %v: %s\n", err, strings.TrimSpace(string(out)))
 	}
 
 	fmt.Println("  Agent loaded and started.")
 	return nil
+}
+
+// launchctl runs a launchctl subcommand under a deadline. bootout waits for the
+// running daemon to terminate, and the daemon does not act on SIGTERM while a
+// fetch is in flight, so an unbounded call can stall init indefinitely.
+func launchctl(args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), launchctlTimeout)
+	defer cancel()
+
+	out, err := exec.CommandContext(ctx, "launchctl", args...).CombinedOutput()
+	if ctx.Err() != nil {
+		return out, fmt.Errorf("timed out after %s", launchctlTimeout)
+	}
+	return out, err
 }
 
 // serviceProgram returns the executable path to record in the agent. A stable
