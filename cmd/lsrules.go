@@ -24,8 +24,7 @@ const (
 
 // homebrewPrefixes covers Apple Silicon and Intel. A cask install is reachable
 // both through the fixed bin symlink and the versioned Caskroom directory it
-// resolves to, and Little Snitch matches the full executable path with no
-// wildcard support, so the published group names all of them.
+// resolves to, so the group names both.
 var homebrewPrefixes = []string{"/opt/homebrew", "/usr/local"}
 
 // denyPolicy controls whether the group also forbids everything else.
@@ -38,15 +37,19 @@ const (
 )
 
 type lsRule struct {
-	Action      string `json:"action"`
-	Process     string `json:"process"`
-	Direction   string `json:"direction"`
-	Protocol    string `json:"protocol,omitempty"`
-	Ports       string `json:"ports,omitempty"`
-	RemoteHosts string `json:"remote-hosts,omitempty"`
-	Remote      string `json:"remote,omitempty"`
-	Disabled    bool   `json:"disabled,omitempty"`
-	Notes       string `json:"notes,omitempty"`
+	Action    string `json:"action"`
+	Process   string `json:"process"`
+	Direction string `json:"direction"`
+	Protocol  string `json:"protocol,omitempty"`
+	Ports     string `json:"ports,omitempty"`
+	// remote-domains, not remote-hosts. A host rule needs Little Snitch to have
+	// tied the name to the connection for this process, but the daemon resolves
+	// through the system resolver so the lookup belongs to mDNSResponder, and the
+	// rule never matches. Little Snitch's own generated rules use domains.
+	RemoteDomains string `json:"remote-domains,omitempty"`
+	Remote        string `json:"remote,omitempty"`
+	Disabled      bool   `json:"disabled,omitempty"`
+	Notes         string `json:"notes,omitempty"`
 }
 
 type lsGroup struct {
@@ -55,15 +58,15 @@ type lsGroup struct {
 	Rules       []lsRule `json:"rules"`
 }
 
-// releasePaths returns the install locations a published group has to cover for
-// the given release. All of them are deterministic, so the file needs no
-// knowledge of the machine it will be used on.
-func releasePaths(version string) []string {
-	version = strings.TrimPrefix(version, "v")
+// releasePaths returns the install locations a published group has to cover.
+// The Caskroom directory is named after the version, so it is wildcarded: Little
+// Snitch accepts a * in a process path, as its own alert-generated rules do, and
+// that keeps the group correct across upgrades without naming a version.
+func releasePaths() []string {
 	paths := make([]string, 0, len(homebrewPrefixes)*2)
 	for _, prefix := range homebrewPrefixes {
 		paths = append(paths, prefix+"/bin/claude-monitor")
-		paths = append(paths, fmt.Sprintf("%s/Caskroom/claude-monitor/%s/claude-monitor", prefix, version))
+		paths = append(paths, prefix+"/Caskroom/claude-monitor/*/claude-monitor")
 	}
 	return paths
 }
@@ -96,12 +99,12 @@ func buildLSGroup(description string, paths []string, deny denyPolicy) lsGroup {
 
 	for _, p := range paths {
 		g.Rules = append(g.Rules, lsRule{
-			Action:      "allow",
-			Process:     p,
-			Direction:   "outgoing",
-			Protocol:    "tcp",
-			Ports:       usagePort,
-			RemoteHosts: usageHost,
+			Action:        "allow",
+			Process:       p,
+			Direction:     "outgoing",
+			Protocol:      "tcp",
+			Ports:         usagePort,
+			RemoteDomains: usageHost,
 			Notes: "GET https://" + usageHost + "/api/oauth/usage. Sent once per poll " +
 				"interval (5 minutes by default), on `claude-monitor refresh`, and on wake " +
 				"from sleep. The only connection the daemon opens.",
@@ -139,9 +142,9 @@ const localDescription = "Every outbound connection claude-monitor makes, for th
 func releaseDescription(version string) string {
 	return "Every outbound connection claude-monitor makes. The daemon contacts one " +
 		"endpoint, the Anthropic OAuth usage API, and nothing else. Covers the Homebrew " +
-		"install paths for version " + strings.TrimPrefix(version, "v") + " on both Apple " +
-		"Silicon and Intel. Subscribe to this group rather than importing it and Little " +
-		"Snitch will follow each release's paths on its own."
+		"install paths on both Apple Silicon and Intel, with the version directory " +
+		"wildcarded so the rules survive upgrades. Published with " +
+		strings.TrimPrefix(version, "v") + "."
 }
 
 // subscribeURI is the handler Little Snitch registers for adding a rule group
@@ -168,16 +171,15 @@ read the rules first with:
 
 What the group contains, for both the /opt/homebrew and /usr/local prefixes:
 
-  allow  <prefix>/bin/claude-monitor                                -> %s:%s
-  allow  <prefix>/Caskroom/claude-monitor/<version>/claude-monitor  -> %s:%s
+  allow  <prefix>/bin/claude-monitor                          -> %s:%s
+  allow  <prefix>/Caskroom/claude-monitor/*/claude-monitor    -> %s:%s
 
-That is the whole list. It lets this program reach one host, the usage API the
+That is the whole list. It lets this program reach one domain, the usage API the
 daemon polls, and grants nothing to any other program. There are no deny rules.
 
-A subscription rather than a fixed rule because Little Snitch matches the full
-executable path and Homebrew installs into a directory named after the version,
-so a fixed rule stops matching as soon as you upgrade. A subscription refreshes
-itself and picks up each release.
+The version directory is wildcarded, so the rules keep matching after an upgrade
+rather than needing re-approval. A subscription rather than a one-off import so
+that any later correction reaches you too.
 
 Options:
   --subscribe, --add    ask Little Snitch to add the subscription
@@ -230,7 +232,7 @@ func runLSRules() {
 		// The published group is deliberately allow-only. A subscription that
 		// silently denied traffic would be a poor surprise, so enforcement stays a
 		// local, deliberate choice via --strict.
-		printLSGroup(buildLSGroup(releaseDescription(relVersion), releasePaths(relVersion), denyOmit))
+		printLSGroup(buildLSGroup(releaseDescription(relVersion), releasePaths(), denyOmit))
 	case printGroup || strict:
 		paths, err := executablePaths()
 		if err != nil {
