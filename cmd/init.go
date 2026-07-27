@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"time"
 
@@ -34,7 +35,7 @@ func runInit() {
 	fmt.Println("\n[1/5] Verifying auth...")
 	cfg, _ := config.Load()
 	credPath := expandHome(cfg.CredentialsPath)
-	creds, err := api.ReadCredentials(credPath)
+	creds, err := api.LoadCredentials(credPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
 		fmt.Fprintf(os.Stderr, "Make sure Claude Code is installed and you are logged in.\n")
@@ -82,7 +83,7 @@ func runInit() {
 
 	// Step 4: Patch tmux config
 	fmt.Println("\n[4/5] Patching tmux config...")
-	tmuxConf := expandHome("~/.config/tmux/tmux.conf")
+	tmuxConf := tmuxConfigPath()
 	if !force && tmuxAlreadyPatched(tmuxConf) {
 		fmt.Println("  tmux config already patched, skipping.")
 	} else {
@@ -92,13 +93,13 @@ func runInit() {
 		}
 	}
 
-	// Step 5: Install and start systemd user service
-	fmt.Println("\n[5/5] Installing systemd user service...")
+	// Step 5: Install and start the platform service
+	fmt.Printf("\n[5/5] Installing %s...\n", serviceDescription)
 	if !force && serviceAlreadyInstalled() {
 		fmt.Println("  Service already installed, skipping.")
 	} else {
-		if err := installSystemdService(); err != nil {
-			fmt.Fprintf(os.Stderr, "ERROR: systemd setup: %v\n", err)
+		if err := installService(); err != nil {
+			fmt.Fprintf(os.Stderr, "ERROR: service setup: %v\n", err)
 			os.Exit(1)
 		}
 	}
@@ -110,15 +111,13 @@ func runInit() {
 		fmt.Println("  tmux config reloaded.")
 	}
 
-	fmt.Println(`
+	fmt.Printf(`
 === Setup complete! ===
 
 Service auto-starts on login. To manage it:
-  systemctl --user status claude-monitor
-  systemctl --user restart claude-monitor
-  journalctl --user -u claude-monitor -f
-
-Keybinding: <prefix> F5  →  manual refresh`)
+%s
+Keybinding: <prefix> F5  →  manual refresh
+`, serviceHints)
 }
 
 func configExists() bool {
@@ -134,67 +133,35 @@ func tmuxAlreadyPatched(path string) bool {
 	return strings.Contains(string(data), "# claude-monitor begin")
 }
 
-func serviceAlreadyInstalled() bool {
-	home, _ := os.UserHomeDir()
-	userUnit := filepath.Join(home, ".config", "systemd", "user", "claude-monitor.service")
-	sysUnit := "/usr/lib/systemd/user/claude-monitor.service"
-	_, errUser := os.Stat(userUnit)
-	_, errSys := os.Stat(sysUnit)
-	// If a package-installed system unit exists, remove any stale user-level unit
-	// that would shadow it (user units take precedence over system units).
-	if errSys == nil && errUser == nil {
-		if err := os.Remove(userUnit); err == nil {
-			fmt.Println("  Removed stale user unit shadowing package-installed service.")
-			exec.Command("systemctl", "--user", "daemon-reload").Run()
+// tmuxConfigPath returns the config file to patch, preferring one that already
+// exists over the XDG default.
+func tmuxConfigPath() string {
+	candidates := []string{"~/.config/tmux/tmux.conf", "~/.tmux.conf"}
+	for _, c := range candidates {
+		if _, err := os.Stat(expandHome(c)); err == nil {
+			return expandHome(c)
 		}
 	}
-	return errUser == nil || errSys == nil
+	return expandHome(candidates[0])
 }
 
-const unitTemplate = `[Unit]
-Description=Claude usage monitor
-After=network.target
-StartLimitIntervalSec=300
-StartLimitBurst=5
-
-[Service]
-ExecStart=claude-monitor daemon
-Restart=on-failure
-RestartSec=30
-
-[Install]
-WantedBy=default.target
-`
-
-func installSystemdService() error {
-	unitDir := expandHome("~/.config/systemd/user")
-	if err := os.MkdirAll(unitDir, 0755); err != nil {
-		return fmt.Errorf("create unit dir: %w", err)
+// defaultStatusRight is used when the user's tmux config has no status-right to
+// preserve. Load average has no portable source.
+func defaultStatusRight() string {
+	loadavg := "#(cut -d ' ' -f 1-3 /proc/loadavg)"
+	if runtime.GOOS == "darwin" {
+		loadavg = "#(sysctl -n vm.loadavg | cut -d ' ' -f 2-4)"
 	}
-
-	unitPath := filepath.Join(unitDir, "claude-monitor.service")
-	if err := os.WriteFile(unitPath, []byte(unitTemplate), 0644); err != nil {
-		return fmt.Errorf("write unit file: %w", err)
-	}
-	fmt.Printf("  Unit file: %s\n", unitPath)
-
-	for _, args := range [][]string{
-		{"--user", "daemon-reload"},
-		{"--user", "enable", "claude-monitor"},
-		{"--user", "restart", "claude-monitor"},
-	} {
-		out, err := exec.Command("systemctl", args...).CombinedOutput()
-		if err != nil {
-			return fmt.Errorf("systemctl %s: %v: %s", strings.Join(args, " "), err, out)
-		}
-	}
-	fmt.Println("  Service enabled and started.")
-	return nil
+	return "#[fg=yellow]" + loadavg + "#[default] #[fg=white]%H:%M#[default]"
 }
 
 func patchTmuxConfig(path string) error {
 	const markerBegin = "# claude-monitor begin"
 	const markerEnd = "# claude-monitor end"
+
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
 
 	data, err := os.ReadFile(path)
 	if err != nil && !os.IsNotExist(err) {
@@ -205,7 +172,7 @@ func patchTmuxConfig(path string) error {
 	// Extract current status-right value (match both single- and double-quoted forms)
 	re := regexp.MustCompile(`(?m)^set\s+-g\s+status-right\s+['"]([^'"]*)['"']`)
 	match := re.FindStringSubmatch(content)
-	existingRight := "#[fg=yellow]#(cut -d ' ' -f 1-3 /proc/loadavg)#[default] #[fg=white]%H:%M#[default]"
+	existingRight := defaultStatusRight()
 	if len(match) > 1 {
 		existingRight = match[1]
 		content = re.ReplaceAllString(content, "")
