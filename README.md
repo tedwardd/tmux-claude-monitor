@@ -50,7 +50,7 @@ claude-monitor init
 
 `init` verifies your credentials, writes a config file, patches your tmux config, and installs a background service: a systemd user service on Linux, a launchd user agent on macOS. See [Manual setup](#manual-setup) below if you prefer to do any of these steps yourself.
 
-On macOS the daemon reads your token from the login keychain, so the first run triggers a system prompt asking whether `security` may access it. Choose "Always Allow", otherwise the prompt returns on every poll.
+On macOS the daemon reads your token from the login keychain. Depending on how the keychain item was created, macOS may ask whether `security` can access it. Choose "Always Allow" if prompted. The daemon reads the token once at startup, so a denied or dismissed prompt shows up again each time the service restarts.
 
 ## Arch Linux
 

@@ -44,7 +44,7 @@ homebrew_casks:
         claude-monitor init
 
       The daemon reads your Claude Code OAuth token from the login keychain.
-      macOS prompts for access the first time it runs. Choose "Always Allow".
+      If macOS asks whether security can access it, choose "Always Allow".
 
 checksum:
   name_template: checksums.txt
