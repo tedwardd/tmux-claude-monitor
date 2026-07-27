@@ -20,29 +20,52 @@ S:42% W:23% +$8.50
 
 ## Installation
 
-### macOS
+### macOS (Homebrew)
 
 ```sh
 brew install --cask tedwardd/tap/claude-monitor
 ```
 
-Both Apple Silicon and Intel Macs are supported.
+Apple Silicon and Intel are both covered. To upgrade later:
 
-### Linux
+```sh
+brew upgrade --cask claude-monitor
+```
+
+### Arch Linux (AUR)
+
+```sh
+# Pre-built binary, no Go toolchain needed
+paru -S tmux-claude-monitor-bin
+
+# Build from source
+paru -S tmux-claude-monitor
+```
+
+Both packages install a systemd user unit at `/usr/lib/systemd/user/claude-monitor.service`. `claude-monitor init` finds that unit and skips installing its own, but it does not enable it, so start the packaged unit yourself:
+
+```sh
+systemctl --user enable --now claude-monitor
+```
+
+Run `init` as well for the credential check and tmux patching.
+
+### Other Linux
 
 Download the archive for your architecture from the [Releases](https://github.com/tedwardd/tmux-claude-monitor/releases) page and put the binary on your `$PATH`:
 
 ```sh
-VERSION=0.2.0
-curl -L "https://github.com/tedwardd/tmux-claude-monitor/releases/download/v${VERSION}/claude-monitor_${VERSION}_linux_amd64.tar.gz" \
+VERSION=0.3.1
+mkdir -p ~/.local/bin
+curl -fsSL "https://github.com/tedwardd/tmux-claude-monitor/releases/download/v${VERSION}/claude-monitor_${VERSION}_linux_amd64.tar.gz" \
   | tar xz -C ~/.local/bin/ claude-monitor
 ```
 
-Arch Linux users should use the AUR packages described below instead.
+Set `VERSION` to the current release, and swap `amd64` for `arm64` on 64-bit ARM.
 
 ### Setup
 
-On either platform, run the one-time setup:
+Once installed, run the one-time setup on any platform:
 
 ```sh
 claude-monitor init
@@ -51,31 +74,6 @@ claude-monitor init
 `init` verifies your credentials, writes a config file, patches your tmux config, and installs a background service: a systemd user service on Linux, a launchd user agent on macOS. See [Manual setup](#manual-setup) below if you prefer to do any of these steps yourself.
 
 On macOS the daemon reads your token from the login keychain. Depending on how the keychain item was created, macOS may ask whether `security` can access it. Choose "Always Allow" if prompted. The daemon reads the token once at startup, so a denied or dismissed prompt shows up again each time the service restarts.
-
-## Arch Linux
-
-Install via your AUR helper:
-
-```sh
-# Pre-built binary (faster install, no Go toolchain needed)
-paru -S tmux-claude-monitor-bin
-
-# Build from source
-paru -S tmux-claude-monitor
-```
-
-After install, enable the daemon:
-
-```sh
-systemctl --user enable --now claude-monitor
-```
-
-Then add to `~/.config/tmux/tmux.conf`:
-
-```
-set -g status-right-length 200
-set -g status-right '#(claude-monitor status) | %H:%M'
-```
 
 ## Commands
 
