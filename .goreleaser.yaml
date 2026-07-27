@@ -37,6 +37,15 @@ homebrew_casks:
         install: |
           if OS.mac?
             system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/claude-monitor"]
+            # An upgrade swaps the binary but leaves the running agent on the old one,
+            # since nothing here manages launchd. Restart it when init has already
+            # installed the agent, and stay quiet when it has not.
+            label = "com.github.tedwardd.claude-monitor"
+            if File.exist?(File.expand_path("~/Library/LaunchAgents/#{label}.plist"))
+              system_command "/bin/launchctl",
+                             args: ["kickstart", "-k", "gui/#{Process.uid}/#{label}"],
+                             must_succeed: false
+            end
           end
     caveats: |
       Run the one-time setup to install the launchd agent and patch your tmux config:

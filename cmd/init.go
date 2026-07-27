@@ -161,6 +161,10 @@ func defaultStatusRight() string {
 // leaves the rest of the line behind.
 var statusRightRe = regexp.MustCompile(`(?m)^set\s+-g\s+status-right\s+(?:'([^']*)'|"([^"]*)")[ \t]*$`)
 
+// managedBlockRe matches a block written by a previous run, including any blank
+// lines leading up to it, so removal does not leave a growing gap behind.
+var managedBlockRe = regexp.MustCompile(`(?s)\n*# claude-monitor begin\n.*?# claude-monitor end\n?`)
+
 // escapeTmuxDoubleQuoted prepares a value for embedding in a double-quoted tmux
 // string. tmux expands backslash escapes there, so the escape character has to be
 // doubled before the quotes are escaped.
@@ -200,38 +204,35 @@ func patchTmuxConfig(path string) error {
 		return fmt.Errorf("back up config: %w", err)
 	}
 
-	existingRight := defaultStatusRight()
-	if match := statusRightRe.FindStringSubmatch(content); match != nil {
-		// Exactly one of the two quote alternatives captures.
-		existingRight = match[1] + match[2]
-		content = statusRightRe.ReplaceAllString(content, "")
+	// Drop the block from any earlier run so re-patching replaces it instead of
+	// stacking a second copy.
+	content = managedBlockRe.ReplaceAllString(content, "")
+	content = strings.TrimRight(content, "\n")
+	if content != "" {
+		content += "\n"
 	}
-	existingRight = escapeTmuxDoubleQuoted(existingRight)
 
-	exe := "claude-monitor"
-	block := fmt.Sprintf(`
+	lines := []string{markerBegin, "set -g status-right-length 200"}
+	// Only supply a status-right when the config sets none. Appending to the
+	// user's own value leaves their line alone, so nothing of theirs is consumed
+	// and re-running cannot lose it. Their non-append assignment also resets the
+	// option ahead of ours every time the file is sourced, which is what keeps
+	// the append from stacking up.
+	if !statusRightRe.MatchString(content) {
+		lines = append(lines, `set -g status-right "`+escapeTmuxDoubleQuoted(defaultStatusRight())+`"`)
+	}
+	lines = append(lines,
+		`set -ga status-right " #(  claude-monitor status)"`,
+		`bind-key F5 run-shell "claude-monitor refresh"`,
+		markerEnd,
+	)
+	block := "\n" + strings.Join(lines, "\n") + "\n"
 
-%s
-set -g status-right-length 200
-set -g status-right "%s #(  %s status)"
-bind-key F5 run-shell "%s refresh"
-%s
-`, markerBegin, existingRight, exe, exe, markerEnd)
-
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+	if err := os.WriteFile(path, []byte(content+block), 0644); err != nil {
 		return err
 	}
-
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0644)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	_, err = f.WriteString(block)
-	if err == nil {
-		fmt.Printf("  Patched: %s\n", path)
-	}
-	return err
+	fmt.Printf("  Patched: %s\n", path)
+	return nil
 }
 
 func runDiscover(token string) {

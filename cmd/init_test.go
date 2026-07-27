@@ -67,41 +67,125 @@ func TestDefaultStatusRightUsesPlatformLoadavg(t *testing.T) {
 	}
 }
 
-// A single-quoted status-right containing double quotes truncated the capture at
-// the inner quote and left the rest of the line orphaned in the config.
-func TestPatchTmuxConfigPreservesQuotesInsideValue(t *testing.T) {
-	const original = `set -g status-right '#[fg=yellow]#(cut -d " " -f 1-3 /proc/loadavg)#[default] #[fg=white]%H:%M#[default]'`
+const userStatusRight = `set -g status-right '#[fg=yellow]#(cut -d " " -f 1-3 /proc/loadavg)#[default] #[fg=white]%H:%M#[default]'`
 
+func writeConf(t *testing.T, body string) string {
+	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	conf := filepath.Join(home, "tmux.conf")
-	if err := os.WriteFile(conf, []byte("set -g status-left 'x'\n"+original+"\nsetw -g mouse on\n"), 0644); err != nil {
+	if err := os.WriteFile(conf, []byte(body), 0644); err != nil {
 		t.Fatalf("write conf: %v", err)
 	}
+	return conf
+}
+
+// The user's own status-right line must survive untouched. It used to be deleted
+// and folded into the generated block, which lost content when the value held a
+// quote and made re-patching unable to recover it.
+func TestPatchTmuxConfigLeavesUserStatusRightAlone(t *testing.T) {
+	conf := writeConf(t, "set -g status-left 'x'\n"+userStatusRight+"\nsetw -g mouse on\n")
 
 	if err := patchTmuxConfig(conf); err != nil {
 		t.Fatalf("patchTmuxConfig: %v", err)
 	}
-	data, err := os.ReadFile(conf)
-	if err != nil {
-		t.Fatalf("read conf: %v", err)
-	}
+	data, _ := os.ReadFile(conf)
 	got := string(data)
 
-	// The whole original value has to survive, not just the part before the quote.
-	for _, want := range []string{`-f 1-3 /proc/loadavg`, `%H:%M`} {
-		if !strings.Contains(got, want) {
-			t.Errorf("patched config dropped %q:\n%s", want, got)
+	if !strings.Contains(got, userStatusRight) {
+		t.Errorf("user's status-right line was modified:\n%s", got)
+	}
+	if !strings.Contains(got, `set -ga status-right " #(  claude-monitor status)"`) {
+		t.Errorf("append line missing:\n%s", got)
+	}
+	// With a value to append to, no synthesised default should be written.
+	if strings.Contains(got, "sysctl -n vm.loadavg") || strings.Contains(got, "-f 1-3 /proc/loadavg)#[default] #[fg=white]%H:%M#[default] #(") {
+		t.Errorf("should not have written its own status-right:\n%s", got)
+	}
+}
+
+// Re-patching is what `init --force` does; it used to stack a second block and
+// replace the preserved value with the platform default.
+func TestPatchTmuxConfigIsIdempotent(t *testing.T) {
+	conf := writeConf(t, userStatusRight+"\n")
+
+	for i := 1; i <= 3; i++ {
+		if err := patchTmuxConfig(conf); err != nil {
+			t.Fatalf("patch %d: %v", i, err)
 		}
 	}
-	// No orphaned remainder left behind by a partial match.
-	for _, line := range strings.Split(got, "\n") {
-		if strings.HasPrefix(strings.TrimSpace(line), `" -f`) {
-			t.Errorf("orphaned line remainder left in config: %q", line)
-		}
+	data, _ := os.ReadFile(conf)
+	got := string(data)
+
+	if n := strings.Count(got, "# claude-monitor begin"); n != 1 {
+		t.Errorf("got %d blocks, want 1:\n%s", n, got)
 	}
-	if strings.Contains(got, `#(cut -d  #(`) {
-		t.Errorf("status-right was truncated mid-command:\n%s", got)
+	if n := strings.Count(got, "claude-monitor status"); n != 1 {
+		t.Errorf("got %d status calls, want 1:\n%s", n, got)
+	}
+	if n := strings.Count(got, "bind-key F5"); n != 1 {
+		t.Errorf("got %d F5 bindings, want 1:\n%s", n, got)
+	}
+	if !strings.Contains(got, userStatusRight) {
+		t.Errorf("user's status-right lost across re-patching:\n%s", got)
+	}
+}
+
+func TestPatchTmuxConfigSuppliesDefaultWhenNoneSet(t *testing.T) {
+	conf := writeConf(t, "setw -g mouse on\n")
+
+	if err := patchTmuxConfig(conf); err != nil {
+		t.Fatalf("patchTmuxConfig: %v", err)
+	}
+	data, _ := os.ReadFile(conf)
+	got := string(data)
+
+	if !strings.Contains(got, "set -g status-right \"") {
+		t.Errorf("expected a default status-right when the config sets none:\n%s", got)
+	}
+	if !strings.Contains(got, "set -ga status-right") {
+		t.Errorf("append line missing:\n%s", got)
+	}
+}
+
+// Sourcing the config twice must not append the segment twice, which is the risk
+// that comes with `set -ga`.
+func TestPatchTmuxConfigSurvivesRepeatedSourcing(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not installed")
+	}
+
+	for name, body := range map[string]string{
+		"user has status-right": userStatusRight + "\n",
+		"config sets none":      "setw -g mouse on\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			conf := writeConf(t, body)
+			if err := patchTmuxConfig(conf); err != nil {
+				t.Fatalf("patchTmuxConfig: %v", err)
+			}
+
+			socket := "cmtest-src"
+			exec.Command("tmux", "-L", socket, "kill-server").Run()
+			if err := exec.Command("tmux", "-L", socket, "-f", "/dev/null", "new-session", "-d", "sleep 10").Run(); err != nil {
+				t.Skipf("could not start tmux: %v", err)
+			}
+			defer exec.Command("tmux", "-L", socket, "kill-server").Run()
+
+			for i := 0; i < 3; i++ {
+				if out, err := exec.Command("tmux", "-L", socket, "source-file", conf).CombinedOutput(); err != nil || len(out) > 0 {
+					t.Fatalf("source %d failed: %v: %s", i, err, out)
+				}
+			}
+
+			out, err := exec.Command("tmux", "-L", socket, "show-options", "-gv", "status-right").Output()
+			if err != nil {
+				t.Fatalf("show-options: %v", err)
+			}
+			if n := strings.Count(string(out), "claude-monitor status"); n != 1 {
+				t.Errorf("after 3 sources status-right holds %d copies: %s", n, out)
+			}
+		})
 	}
 }
 
