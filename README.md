@@ -89,7 +89,7 @@ claude-monitor init
 
 `init` verifies your credentials, writes a config file, patches your tmux config, and installs a background service: a systemd user service on Linux, a launchd user agent on macOS. See [Manual setup](#manual-setup) below if you prefer to do any of these steps yourself.
 
-On macOS the daemon reads your token from the login keychain. Depending on how the keychain item was created, macOS may ask whether `security` can access it. Choose "Always Allow" if prompted. The daemon reads the token once at startup, so a denied or dismissed prompt shows up again each time the service restarts.
+On macOS the daemon reads your token from the login keychain. Depending on how the keychain item was created, macOS may ask whether `security` can access it. Choose "Always Allow" if prompted. A denied or dismissed prompt returns whenever the daemon reads the token again, which is at startup and after the endpoint rejects it.
 
 ## Commands
 
@@ -117,7 +117,11 @@ A background service polls the Claude API every 5 minutes and writes a cache fil
 
 A failed fetch is recorded against the previous reading rather than replacing it, so the last good value keeps showing until it passes the staleness threshold. That way one bad poll out of the couple of hundred a day is invisible instead of blanking the bar.
 
-The next attempt backs off from 30 seconds, doubling to a 5 minute ceiling, and returns to normal on the first success. A `429` is the exception: the endpoint is shared by everything holding the same OAuth token, so the daemon waits for the interval in the response's `Retry-After` header instead of guessing, which avoids re-tripping the limit.
+The next attempt backs off from 30 seconds, doubling to a 5 minute ceiling, and returns to normal on the first success. Each wait carries a small random addition, so several clients that failed at the same time do not come back in lockstep and collide again.
+
+A `429` is the exception: the endpoint is shared by everything holding the same OAuth token, so the daemon waits for the interval in the response's `Retry-After` header instead of guessing, which avoids re-tripping the limit.
+
+A rejected token is the other exception. The daemon re-reads your credentials and retries once, but only when the stored token has actually changed, so a rotation is picked up without restarting anything. An unchanged token is not retried, since it would be rejected again against an endpoint that rate-limits.
 
 To catch a laptop coming out of sleep, the Linux daemon listens for the D-Bus `PrepareForSleep` signal from `org.freedesktop.login1.Manager` and refreshes within about 5 seconds. macOS has no equivalent signal reachable without cgo, so the daemon there compares wall-clock against monotonic elapsed time and treats a gap as a wake. Linux uses the same method when D-Bus is unavailable.
 
@@ -213,7 +217,7 @@ It exits non-zero when something is wrong, so it is usable from a script. `??` h
 | `rate-limited (HTTP 429)` | Something else polls the same endpoint with the same OAuth token, so they share its rate limit. Another usage monitor, or Claude Code itself. | Clears on its own. If it recurs, quit the other monitor or raise `poll_interval_seconds`. |
 | `bad file descriptor` or `connection refused` | The connection was blocked outright. On macOS that is almost always a firewall deny rule. | Delete the `deny` rule under `claude-monitor` in Little Snitch. One dismissed prompt creates a permanent one. |
 | `context deadline exceeded` | The request never completed. A firewall prompt waiting for an answer looks identical to a dead network. | Answer any pending prompt, then check connectivity. |
-| `HTTP 401` or `HTTP 403` | The OAuth token is expired or rejected. | `claude logout && claude login`, then restart the daemon. It reads the token once at startup. |
+| `HTTP 401` or `HTTP 403` | The OAuth token is expired or rejected. | `claude logout && claude login`. The daemon re-reads credentials when it sees a rejection, so it picks the new token up on its next poll without a restart. |
 | `read credentials` | No token found in the file or the login keychain. | `claude logout && claude login`, then restart the daemon. |
 | `PID N is not running` | The daemon died and was not restarted. | Restart it. On macOS: `launchctl kickstart -k gui/$(id -u)/com.github.tedwardd.claude-monitor` |
 | `last success` over 15 minutes, no error | Fetches stopped without recording a failure, usually a laptop asleep longer than the window. | `claude-monitor refresh`. It should recover on its own on wake. |

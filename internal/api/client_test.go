@@ -2,6 +2,8 @@ package api_test
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -133,5 +135,49 @@ func TestRateLimitErrorMentionsTheWait(t *testing.T) {
 	}
 	if bare := (&api.RateLimitError{}).Error(); !strings.Contains(bare, "429") {
 		t.Errorf("expected the status in %q", bare)
+	}
+}
+
+// 401 and 403 have to be distinguishable, since they are the only failures a
+// credential reload can fix.
+func TestFetchUsageReturnsAuthErrorForRejectedToken(t *testing.T) {
+	for _, code := range []int{401, 403} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(code)
+		}))
+		_, err := api.FetchUsageFromURL(srv.URL, "stale-token")
+		srv.Close()
+
+		var authErr *api.AuthError
+		if !errors.As(err, &authErr) {
+			t.Errorf("HTTP %d gave %v, want an *api.AuthError", code, err)
+			continue
+		}
+		if authErr.StatusCode != code {
+			t.Errorf("AuthError.StatusCode = %d, want %d", authErr.StatusCode, code)
+		}
+		if !strings.Contains(err.Error(), fmt.Sprint(code)) {
+			t.Errorf("error text %q should name the status", err)
+		}
+	}
+}
+
+// Other statuses must not be mistaken for auth failures, or a reload would run
+// for something a reload cannot fix.
+func TestFetchUsageDoesNotTreatOtherStatusesAsAuth(t *testing.T) {
+	for _, code := range []int{400, 404, 500, 503} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(code)
+		}))
+		_, err := api.FetchUsageFromURL(srv.URL, "tok")
+		srv.Close()
+
+		var authErr *api.AuthError
+		if errors.As(err, &authErr) {
+			t.Errorf("HTTP %d was classified as an auth failure", code)
+		}
+		if err == nil {
+			t.Errorf("HTTP %d returned no error", code)
+		}
 	}
 }

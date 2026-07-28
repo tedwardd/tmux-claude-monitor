@@ -3,6 +3,7 @@ package cmd
 import (
 	"errors"
 	"fmt"
+	"math/rand/v2"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -53,12 +54,13 @@ func runDaemon() {
 	normal := time.Duration(cfg.PollIntervalSeconds) * time.Second
 	cachePath := cache.Path(cfg.CachePath)
 
-	// consecutiveFails is touched only here, and fetch only ever runs on the
-	// poller's fetch goroutine, so it needs no synchronisation.
+	// consecutiveFails and the token source are touched only here, and fetch only
+	// ever runs on the poller's fetch goroutine, so they need no synchronisation.
 	consecutiveFails := 0
+	tokens := newTokenSource(credPath, creds.AccessToken)
 
 	fetch := func() time.Duration {
-		usage, err := api.FetchUsage(creds.AccessToken)
+		usage, err := tokens.get()
 		if err != nil {
 			// Keep the last good reading; the status line tolerates a gap up to the
 			// staleness threshold, and blanking it on one bad poll wasted that.
@@ -70,12 +72,12 @@ func runDaemon() {
 			var limited *api.RateLimitError
 			if errors.As(err, &limited) && limited.RetryAfter > 0 {
 				consecutiveFails++
-				return limited.RetryAfter
+				return jittered(limited.RetryAfter)
 			}
 
 			backoff := backoffFor(consecutiveFails)
 			consecutiveFails++
-			return backoff
+			return jittered(backoff)
 		}
 		consecutiveFails = 0
 		cache.WriteToPath(cachePath, cache.Entry{
@@ -111,6 +113,18 @@ const (
 	// negative interval, which panics. Reached after roughly five hours offline.
 	maxFailShift = 8
 )
+
+// jittered spreads a wait over a small window above the requested duration.
+// Anything else holding the same OAuth token shares its rate limit, and without
+// this several clients that failed together come back in lockstep and collide
+// again. Only ever adds, so it cannot retry sooner than intended or hand
+// Ticker.Reset a non-positive interval.
+func jittered(d time.Duration) time.Duration {
+	if d <= 0 {
+		return d
+	}
+	return d + rand.N(d/4+1)
+}
 
 // backoffFor returns how long to wait after consecutiveFails failed fetches.
 func backoffFor(consecutiveFails int) time.Duration {
