@@ -38,8 +38,8 @@ func TestLSGroupNeverGrantsAccessToAnyProcess(t *testing.T) {
 			if r.Process == "any" || r.Process == "" {
 				t.Errorf("strict=%v: rule grants access to process %q, must name this binary", strict, r.Process)
 			}
-			if !strings.HasPrefix(r.Process, "/") {
-				t.Errorf("strict=%v: process %q is not an absolute path", strict, r.Process)
+			if !strings.HasPrefix(r.Process, "/") && !strings.HasPrefix(r.Process, "path.") {
+				t.Errorf("strict=%v: process %q is neither an absolute path nor a path pattern", strict, r.Process)
 			}
 		}
 	}
@@ -180,9 +180,9 @@ func TestReleaseGroupCoversBothHomebrewPrefixes(t *testing.T) {
 
 	want := []string{
 		"/opt/homebrew/bin/claude-monitor",
-		"/opt/homebrew/Caskroom/claude-monitor/*/claude-monitor",
+		"path.opt/homebrew/Caskroom/claude-monitor/*/claude-monitor",
 		"/usr/local/bin/claude-monitor",
-		"/usr/local/Caskroom/claude-monitor/*/claude-monitor",
+		"path.usr/local/Caskroom/claude-monitor/*/claude-monitor",
 	}
 	got := map[string]bool{}
 	for _, r := range g.Rules {
@@ -205,8 +205,15 @@ func TestReleaseGroupCoversBothHomebrewPrefixes(t *testing.T) {
 // stop matching on the next upgrade, which is the failure this replaced.
 func TestReleasePathsWildcardTheVersion(t *testing.T) {
 	for _, p := range releasePaths() {
-		if strings.Contains(p, "Caskroom") && !strings.Contains(p, "/*/") {
-			t.Errorf("Caskroom path is not wildcarded: %s", p)
+		if strings.Contains(p, "Caskroom") {
+			if !strings.Contains(p, "/*/") {
+				t.Errorf("Caskroom path is not wildcarded: %s", p)
+			}
+			// A bare path containing * is validated for existence and imported
+			// disabled, so the pattern form is required.
+			if !strings.HasPrefix(p, "path.") {
+				t.Errorf("wildcarded path lacks the pattern prefix: %s", p)
+			}
 		}
 		for _, digitish := range []string{"0.", "1.", "2."} {
 			if strings.Contains(p, digitish) {

@@ -66,9 +66,19 @@ func releasePaths() []string {
 	paths := make([]string, 0, len(homebrewPrefixes)*2)
 	for _, prefix := range homebrewPrefixes {
 		paths = append(paths, prefix+"/bin/claude-monitor")
-		paths = append(paths, prefix+"/Caskroom/claude-monitor/*/claude-monitor")
+		paths = append(paths, pathPattern(prefix+"/Caskroom/claude-monitor/*/claude-monitor"))
 	}
 	return paths
+}
+
+// pathPattern encodes a process path so Little Snitch treats it as a pattern
+// rather than a literal file. A bare path containing * is checked for existence,
+// fails, and the rule is imported disabled with "the executable it refers to has
+// been deleted, renamed or moved". The prefixed form is what Little Snitch writes
+// for its own wildcard rules, alongside the documented identifier.TEAM/ID form
+// for code identities: the prefix selects how the field is read.
+func pathPattern(p string) string {
+	return "path." + strings.TrimPrefix(p, "/")
 }
 
 // executablePaths returns the paths the running binary can legitimately be
