@@ -218,6 +218,27 @@ It exits non-zero when something is wrong, so it is usable from a script. `??` h
 | `PID N is not running` | The daemon died and was not restarted. | Restart it. On macOS: `launchctl kickstart -k gui/$(id -u)/com.github.tedwardd.claude-monitor` |
 | `last success` over 15 minutes, no error | Fetches stopped without recording a failure, usually a laptop asleep longer than the window. | `claude-monitor refresh`. It should recover on its own on wake. |
 
+### Duplicate or conflicting pollers
+
+`doctor` answers "why is there no reading". A different failure is two daemons running at once, which `make check-pollers` looks for:
+
+```sh
+make check-pollers
+```
+
+```
+  [FAIL] daemons          2 running, they will fight over the PID file and double the API polling
+                        PID 11111   /opt/homebrew/bin/claude-monitor
+                        PID 22222   /path/to/checkout/claude-monitor
+  [FAIL] source build     PID 22222 is running from this tree
+  [FAIL] pid file         names PID 99999, which is not running (stale). refresh will fail
+  [note] other pollers    ClaudeBar also running, sharing the token's rate limit
+```
+
+It exits non-zero when it finds a conflict. The case it exists for: running `./claude-monitor daemon` from a checkout while the installed one is running. Both write `~/.cache/claude-monitor/daemon.pid`, and whichever exits first deletes it, so `refresh` reports no daemon while one is polling happily. Two daemons also double the requests against a rate limit already shared with anything else holding the same token.
+
+Read-only commands are safe to run from a checkout at any time: `status`, `doctor`, and `lsrules --print` only read shared state. `daemon`, `init`, and `refresh` write it.
+
 A single failed poll no longer blanks the bar. The last good reading stays visible until it passes the 15 minute staleness threshold, so a brief 429 or network blip is invisible. `doctor` still reports it as a note, and `??` now means the reading is genuinely too old to trust rather than that one fetch failed.
 
 ## Viewing logs

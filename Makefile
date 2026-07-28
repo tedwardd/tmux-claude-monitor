@@ -11,13 +11,21 @@ TMUX_CONF  := $(HOME)/.config/tmux/tmux.conf
 SHA256      := $(shell command -v sha256sum >/dev/null 2>&1 && echo sha256sum || echo 'shasum -a 256')
 SED_INPLACE := $(shell sed --version >/dev/null 2>&1 && echo 'sed -i' || echo "sed -i ''")
 
-.PHONY: build test install snapshot pkg pkg-install pkg-uninstall clean
+.PHONY: build test check-pollers snapshot install pkg pkg-install pkg-uninstall clean
 
 build:
 	go build -o $(BINARY) .
 
 test:
 	go test ./...
+
+# Skim for a second daemon, a daemon started from this tree, a stale PID file, or
+# another usage monitor sharing the token. Running `./claude-monitor daemon` from
+# here hijacks the installed daemon's PID file and deletes it on exit, which
+# leaves refresh reporting no daemon while one is running. Exits non-zero on a
+# conflict. For "why is the bar showing ??" use `claude-monitor doctor` instead.
+check-pollers:
+	@./scripts/check-pollers.sh
 
 # Build every release target locally and render the Homebrew cask into dist/
 snapshot:
