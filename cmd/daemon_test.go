@@ -199,3 +199,42 @@ func TestPollerCoalescesTriggers(t *testing.T) {
 		t.Errorf("got %d fetches from 20 signals, expected coalescing", n)
 	}
 }
+
+// Jitter must only ever add, so a retry can never come sooner than the backoff
+// intended, and Ticker.Reset must never see a non-positive interval.
+func TestJitteredStaysWithinBounds(t *testing.T) {
+	for _, base := range []time.Duration{minBackoff, 60 * time.Second, maxBackoff, time.Second} {
+		for i := 0; i < 500; i++ {
+			got := jittered(base)
+			if got < base {
+				t.Fatalf("jittered(%v) = %v, must not be shorter", base, got)
+			}
+			if max := base + base/4 + 1; got > max {
+				t.Fatalf("jittered(%v) = %v, above the %v ceiling", base, got, max)
+			}
+			if got <= 0 {
+				t.Fatalf("jittered(%v) = %v, must be positive", base, got)
+			}
+		}
+	}
+}
+
+// Without spread, clients that failed together retry together and collide on the
+// same shared rate limit again.
+func TestJitteredActuallyVaries(t *testing.T) {
+	seen := map[time.Duration]bool{}
+	for i := 0; i < 200; i++ {
+		seen[jittered(maxBackoff)] = true
+	}
+	if len(seen) < 10 {
+		t.Errorf("only %d distinct waits from 200 draws; jitter is not spreading retries", len(seen))
+	}
+}
+
+func TestJitteredLeavesNonPositiveAlone(t *testing.T) {
+	for _, d := range []time.Duration{0, -time.Second} {
+		if got := jittered(d); got != d {
+			t.Errorf("jittered(%v) = %v, want it returned unchanged for the caller to handle", d, got)
+		}
+	}
+}

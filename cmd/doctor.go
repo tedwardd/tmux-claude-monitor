@@ -211,7 +211,8 @@ func fixForError(msg string) string {
 		return "Rate limited, usually because something else polls this endpoint with the same token. " +
 			"It clears itself; if it persists, quit other usage monitors or raise poll_interval_seconds."
 	case strings.Contains(msg, "HTTP 401"), strings.Contains(msg, "HTTP 403"):
-		return "The token is rejected. Run: claude logout && claude login, then " + daemonRestartHint
+		return "The token is rejected. Run: claude logout && claude login. The daemon re-reads " +
+			"credentials when it sees a rejection, so it should recover on its next poll without a restart."
 	case strings.Contains(msg, "credentials"):
 		return "Run: claude logout && claude login, then " + daemonRestartHint
 	case strings.Contains(msg, "bad file descriptor"), strings.Contains(msg, "connection refused"):
