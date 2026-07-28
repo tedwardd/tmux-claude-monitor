@@ -21,6 +21,8 @@ const (
 	launchctlTimeout = 15 * time.Second
 )
 
+const daemonRestartHint = "restart it: launchctl kickstart -k gui/$(id -u)/" + launchdLabel
+
 const serviceHints = `  launchctl print gui/$(id -u)/com.github.tedwardd.claude-monitor
   launchctl kickstart -k gui/$(id -u)/com.github.tedwardd.claude-monitor
   tail -f ~/Library/Logs/claude-monitor.log

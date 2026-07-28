@@ -22,7 +22,7 @@ Two placeholders stand in when there is no reading to show:
 | Placeholder | Cause |
 |---|---|
 | `Claude: --` | No cache file, so the daemon has not run yet |
-| `Claude: ??` | The last fetch failed, or the cache is older than 15 minutes |
+| `Claude: ??` | The reading is older than 15 minutes, or a fetch failed with nothing stored to fall back on. See [When the status bar shows ??](#when-the-status-bar-shows-) |
 
 Weekly usage is fetched and kept in the cache, but nothing renders it in the status line yet.
 
@@ -98,6 +98,7 @@ On macOS the daemon reads your token from the login keychain. Depending on how t
 | `claude-monitor init` | One-time setup |
 | `claude-monitor status` | Print the current status string (called by tmux) |
 | `claude-monitor refresh` | Signal the daemon for an immediate fetch |
+| `claude-monitor doctor` | Diagnose why the status bar has no reading (see [When the status bar shows ??](#when-the-status-bar-shows-)) |
 | `claude-monitor lsrules` | Explain the Little Snitch rule group; `--subscribe` to add it (see [Little Snitch](#little-snitch)) |
 | `claude-monitor daemon` | Run the background poller (managed by systemd or launchd) |
 
@@ -114,7 +115,9 @@ On macOS the daemon reads your token from the login keychain. Depending on how t
 
 A background service polls the Claude API every 5 minutes and writes a cache file. The tmux status bar reads from that cache via `claude-monitor status`. The service is a systemd user service on Linux and a launchd user agent on macOS.
 
-When a fetch fails, the error goes into the cache so the status bar shows `??`, and the next attempt backs off starting at 30 seconds and doubling up to 5 minutes. The interval returns to normal on the first success.
+A failed fetch is recorded against the previous reading rather than replacing it, so the last good value keeps showing until it passes the staleness threshold. That way one bad poll out of the couple of hundred a day is invisible instead of blanking the bar.
+
+The next attempt backs off from 30 seconds, doubling to a 5 minute ceiling, and returns to normal on the first success. A `429` is the exception: the endpoint is shared by everything holding the same OAuth token, so the daemon waits for the interval in the response's `Retry-After` header instead of guessing, which avoids re-tripping the limit.
 
 To catch a laptop coming out of sleep, the Linux daemon listens for the D-Bus `PrepareForSleep` signal from `org.freedesktop.login1.Manager` and refreshes within about 5 seconds. macOS has no equivalent signal reachable without cgo, so the daemon there compares wall-clock against monotonic elapsed time and treats a gap as a wake. Linux uses the same method when D-Bus is unavailable.
 
@@ -184,6 +187,38 @@ Valid values: `"bar"`, `"session"`, `"reset"`, `"extra"`
 The example above shows only the block bar and session percentage, hiding the reset time and extra usage.
 
 On macOS, `credentials_path` normally points at a file that does not exist. That is expected: the daemon tries the path first and then reads the login keychain. Leave the key at its default unless you keep a credentials file of your own somewhere.
+
+## When the status bar shows ??
+
+Run the diagnostic first. It reads the same cache the status bar does and names the cause:
+
+```sh
+claude-monitor doctor
+```
+
+```
+  [ok  ] config        /Users/you/.config/claude-monitor/config.json
+  [ok  ] cache         /Users/you/.cache/claude-monitor/status.json
+  [FAIL] reading       none stored, so the bar shows ??
+  [FAIL] last fetch    usage rate-limited (HTTP 429)
+  [ok  ] daemon        running (PID 9402)
+  [ok  ] credentials   readable
+  [note] other pollers ClaudeBar also running
+```
+
+It exits non-zero when something is wrong, so it is usable from a script. `??` has only two direct causes: the last fetch failed with nothing stored to fall back on, or the stored reading is older than 15 minutes. Everything below is one of those two.
+
+| What `doctor` reports | Cause | Fix |
+|---|---|---|
+| `rate-limited (HTTP 429)` | Something else polls the same endpoint with the same OAuth token, so they share its rate limit. Another usage monitor, or Claude Code itself. | Clears on its own. If it recurs, quit the other monitor or raise `poll_interval_seconds`. |
+| `bad file descriptor` or `connection refused` | The connection was blocked outright. On macOS that is almost always a firewall deny rule. | Delete the `deny` rule under `claude-monitor` in Little Snitch. One dismissed prompt creates a permanent one. |
+| `context deadline exceeded` | The request never completed. A firewall prompt waiting for an answer looks identical to a dead network. | Answer any pending prompt, then check connectivity. |
+| `HTTP 401` or `HTTP 403` | The OAuth token is expired or rejected. | `claude logout && claude login`, then restart the daemon. It reads the token once at startup. |
+| `read credentials` | No token found in the file or the login keychain. | `claude logout && claude login`, then restart the daemon. |
+| `PID N is not running` | The daemon died and was not restarted. | Restart it. On macOS: `launchctl kickstart -k gui/$(id -u)/com.github.tedwardd.claude-monitor` |
+| `last success` over 15 minutes, no error | Fetches stopped without recording a failure, usually a laptop asleep longer than the window. | `claude-monitor refresh`. It should recover on its own on wake. |
+
+A single failed poll no longer blanks the bar. The last good reading stays visible until it passes the 15 minute staleness threshold, so a brief 429 or network blip is invisible. `doctor` still reports it as a note, and `??` now means the reading is genuinely too old to trust rather than that one fetch failed.
 
 ## Viewing logs
 

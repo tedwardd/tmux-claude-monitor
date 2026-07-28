@@ -77,7 +77,7 @@ func FetchUsageFromURL(url, token string) (UsageData, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode == 429 {
-		return UsageData{}, fmt.Errorf("usage rate-limited (HTTP 429)")
+		return UsageData{}, &RateLimitError{RetryAfter: parseRetryAfter(resp.Header.Get("Retry-After"))}
 	}
 	if resp.StatusCode != 200 {
 		return UsageData{}, fmt.Errorf("usage returned HTTP %d", resp.StatusCode)

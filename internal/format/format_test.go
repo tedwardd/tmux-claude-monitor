@@ -127,3 +127,39 @@ func TestResetTimeInOutput(t *testing.T) {
 		t.Errorf("expected reset time, got: %q", out)
 	}
 }
+
+// A transient fetch failure must not blank the bar. The 15 minute staleness
+// threshold exists to absorb gaps, but it never applied because the daemon
+// replaced the reading with an error-only entry, so one bad poll out of a few
+// hundred a day showed "??" until the next success.
+func TestStatusLineKeepsLastReadingThroughTransientError(t *testing.T) {
+	e := makeEntry(42.0, time.Hour, "")
+	e.LastError = "usage rate-limited (HTTP 429)"
+
+	got := format.StatusLine(e)
+	if strings.Contains(got, "??") {
+		t.Errorf("a recent reading with a transient error must still render, got %q", got)
+	}
+	if !strings.Contains(got, "42%") {
+		t.Errorf("expected the preserved reading in %q", got)
+	}
+}
+
+// Once the reading is genuinely old, "??" is correct even with data present.
+func TestStatusLineFallsBackWhenStaleDespiteReading(t *testing.T) {
+	e := makeEntry(42.0, time.Hour, "")
+	e.FetchedAt = time.Now().Add(-30 * time.Minute).UTC()
+	e.LastError = "usage rate-limited (HTTP 429)"
+
+	if got := format.StatusLine(e); !strings.Contains(got, "??") {
+		t.Errorf("a stale reading must fall back, got %q", got)
+	}
+}
+
+// A hard failure with nothing to show still blanks.
+func TestStatusLineFallsBackWhenNoReadingAtAll(t *testing.T) {
+	e := cache.Entry{Error: "read credentials: no such file"}
+	if got := format.StatusLine(e); !strings.Contains(got, "??") {
+		t.Errorf("expected fallback with no reading, got %q", got)
+	}
+}
