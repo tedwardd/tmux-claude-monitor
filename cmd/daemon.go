@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -59,7 +60,19 @@ func runDaemon() {
 	fetch := func() time.Duration {
 		usage, err := api.FetchUsage(creds.AccessToken)
 		if err != nil {
-			cache.WriteToPath(cachePath, cache.Entry{FetchedAt: time.Now().UTC(), Error: err.Error()})
+			// Keep the last good reading; the status line tolerates a gap up to the
+			// staleness threshold, and blanking it on one bad poll wasted that.
+			cache.RecordFailure(cachePath, err)
+
+			// A 429 comes with the server's own wait, which beats guessing and
+			// avoids re-tripping the limit. Failures still count so that a
+			// rate-limit followed by other errors keeps escalating.
+			var limited *api.RateLimitError
+			if errors.As(err, &limited) && limited.RetryAfter > 0 {
+				consecutiveFails++
+				return limited.RetryAfter
+			}
+
 			backoff := backoffFor(consecutiveFails)
 			consecutiveFails++
 			return backoff

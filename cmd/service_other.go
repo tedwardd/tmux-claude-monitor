@@ -12,6 +12,8 @@ import (
 
 const serviceDescription = "systemd user service"
 
+const daemonRestartHint = "restart it: systemctl --user restart claude-monitor"
+
 const serviceHints = `  systemctl --user status claude-monitor
   systemctl --user restart claude-monitor
   journalctl --user -u claude-monitor -f

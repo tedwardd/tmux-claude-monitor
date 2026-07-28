@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -93,5 +94,44 @@ func TestFetchUsageHTTP401(t *testing.T) {
 	_, err := api.FetchUsageFromURL(srv.URL, "bad-token")
 	if err == nil {
 		t.Error("expected error for HTTP 401")
+	}
+}
+
+func TestParseRetryAfterSeconds(t *testing.T) {
+	for _, tc := range []struct {
+		header string
+		want   time.Duration
+	}{
+		{"30", 30 * time.Second},
+		{"1", time.Second},
+		{"", 0},
+		{"garbage", 0},
+		{"0", 0},                  // no useful hint; caller falls back to its own backoff
+		{"-5", 0},                 // nonsense must not become a negative interval
+		{"999999", 1 * time.Hour}, // clamped, so a bad header cannot stall polling
+	} {
+		if got := api.ParseRetryAfterForTest(tc.header); got != tc.want {
+			t.Errorf("Retry-After %q = %v, want %v", tc.header, got, tc.want)
+		}
+	}
+}
+
+// Ticker.Reset panics on a non-positive interval, so this must hold for anything
+// the header can contain.
+func TestParseRetryAfterNeverNegative(t *testing.T) {
+	for _, h := range []string{"-1", "-99999", "0", "", "nonsense", "Thu, 01 Jan 1970 00:00:00 GMT"} {
+		if got := api.ParseRetryAfterForTest(h); got < 0 {
+			t.Errorf("Retry-After %q produced %v", h, got)
+		}
+	}
+}
+
+func TestRateLimitErrorMentionsTheWait(t *testing.T) {
+	withWait := (&api.RateLimitError{RetryAfter: 45 * time.Second}).Error()
+	if !strings.Contains(withWait, "429") || !strings.Contains(withWait, "45s") {
+		t.Errorf("expected the status and the wait in %q", withWait)
+	}
+	if bare := (&api.RateLimitError{}).Error(); !strings.Contains(bare, "429") {
+		t.Errorf("expected the status in %q", bare)
 	}
 }

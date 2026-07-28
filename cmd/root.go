@@ -21,6 +21,8 @@ func Execute() {
 		runRefresh()
 	case "init":
 		runInit()
+	case "doctor":
+		runDoctor()
 	case "lsrules":
 		runLSRules()
 	case "--help", "-h", "help":
@@ -46,6 +48,7 @@ Commands:
   daemon   Start background poller (writes cache every 5 min)
   status   Print tmux-formatted usage string (reads cache)
   refresh  Signal daemon for immediate fetch
+  doctor   Diagnose why the status bar is not showing a reading
   lsrules  Explain the Little Snitch rule group; --subscribe to add it
 `)
 }

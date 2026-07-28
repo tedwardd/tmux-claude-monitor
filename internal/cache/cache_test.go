@@ -1,6 +1,7 @@
 package cache_test
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -143,5 +144,75 @@ func TestWriteToPathKeepsOwnerOnlyPermissions(t *testing.T) {
 	// CreateTemp makes files 0600; the rename must not loosen that.
 	if perm := fi.Mode().Perm(); perm != 0600 {
 		t.Errorf("permissions = %o, want 600", perm)
+	}
+}
+
+// A transient failure must leave the previous reading in place, since the status
+// line tolerates a gap up to the staleness threshold.
+func TestRecordFailureKeepsLastReading(t *testing.T) {
+	p := tempCachePath(t)
+	good := cache.Entry{
+		FetchedAt:          time.Now().UTC(),
+		SessionUtilization: 42,
+		SessionResetsAt:    time.Now().Add(time.Hour).UTC(),
+	}
+	if err := cache.WriteToPath(p, good); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	if err := cache.RecordFailure(p, errors.New("usage rate-limited (HTTP 429)")); err != nil {
+		t.Fatalf("RecordFailure: %v", err)
+	}
+
+	got, err := cache.ReadFromPath(p)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if got.SessionUtilization != 42 {
+		t.Errorf("reading discarded: SessionUtilization = %v, want 42", got.SessionUtilization)
+	}
+	if !got.FetchedAt.Equal(good.FetchedAt) {
+		t.Error("FetchedAt moved; it must keep marking the last success so staleness stays meaningful")
+	}
+	if got.Error != "" {
+		t.Errorf("Error must stay empty so the reading still renders, got %q", got.Error)
+	}
+	if got.LastError == "" {
+		t.Error("LastError not recorded")
+	}
+	if got.LastErrorAt.IsZero() {
+		t.Error("LastErrorAt not recorded")
+	}
+}
+
+// With nothing worth keeping there is no reading to protect, so the failure is
+// recorded as hard and the bar correctly blanks.
+func TestRecordFailureWithNoPriorReading(t *testing.T) {
+	p := tempCachePath(t)
+	if err := cache.RecordFailure(p, errors.New("read credentials: nope")); err != nil {
+		t.Fatalf("RecordFailure: %v", err)
+	}
+	got, err := cache.ReadFromPath(p)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if got.Error == "" {
+		t.Error("expected a hard Error when there was no prior reading")
+	}
+	if got.HasReading() {
+		t.Error("HasReading must be false for an error-only entry")
+	}
+}
+
+// A success has to clear the previous failure, or the note would linger forever.
+func TestSuccessClearsPriorFailure(t *testing.T) {
+	p := tempCachePath(t)
+	cache.WriteToPath(p, cache.Entry{FetchedAt: time.Now().UTC(), SessionUtilization: 10})
+	cache.RecordFailure(p, errors.New("boom"))
+	cache.WriteToPath(p, cache.Entry{FetchedAt: time.Now().UTC(), SessionUtilization: 20})
+
+	got, _ := cache.ReadFromPath(p)
+	if got.LastError != "" {
+		t.Errorf("LastError survived a success: %q", got.LastError)
 	}
 }
