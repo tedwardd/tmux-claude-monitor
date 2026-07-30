@@ -17,6 +17,28 @@ import (
 	"claude-monitor/internal/config"
 )
 
+const (
+	baseBackoff = 30 * time.Second
+	maxBackoff  = 300 * time.Second
+)
+
+// computeBackoff returns the exponential backoff duration for the given
+// number of consecutive failures, capped at maxBackoff. The shift amount is
+// clamped before use so that a long-running daemon with many consecutive
+// failures can't overflow the 1<<consecutiveFails computation into a
+// zero or negative duration, which would panic time.Ticker.Reset.
+func computeBackoff(consecutiveFails int) time.Duration {
+	shift := consecutiveFails
+	if shift > 10 {
+		shift = 10
+	}
+	backoff := baseBackoff * time.Duration(1<<shift)
+	if backoff > maxBackoff {
+		backoff = maxBackoff
+	}
+	return backoff
+}
+
 func runDaemon() {
 	cfg, err := config.Load()
 	if err != nil {
@@ -56,10 +78,7 @@ func runDaemon() {
 		p := cache.Path(cfg.CachePath)
 		if err != nil {
 			cache.WriteToPath(p, cache.Entry{FetchedAt: time.Now().UTC(), Error: err.Error()})
-			backoff := time.Duration(30*(1<<consecutiveFails)) * time.Second
-			if backoff > 300*time.Second {
-				backoff = 300 * time.Second
-			}
+			backoff := computeBackoff(consecutiveFails)
 			consecutiveFails++
 			if ticker != nil {
 				ticker.Reset(backoff)
